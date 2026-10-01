@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// Direct backend URL — no proxy needed
-const BASE_URL = 'http://holu-docker-new-env.eba-kjjjd7py.us-east-1.elasticbeanstalk.com';
+// Use relative '/' so Vercel proxy forwards /api/* to the backend (avoids CORS)
+const BASE_URL = '/';
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -37,7 +37,7 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem('refresh_token');
       if (refreshToken) {
         try {
-          const res = await axios.post(`${BASE_URL}/api/v1/auth/refresh`, { refresh_token: refreshToken }, {
+          const res = await axios.post('/api/v1/auth/refresh', { refresh_token: refreshToken }, {
             headers: { 'X-Domain': localStorage.getItem('tenant_domain') || 'nilesh' }
           });
           if (res.data?.access_token) {
