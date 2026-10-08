@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { getDashboardSummaryApi, getMenusApi, getMenusForChildApi, getMenuDetailApi } from '../../services/api';
 import { ShimmerStats, ShimmerCards } from '../../components/Shimmer';
+import AddonModal, { DEFAULT_ADDONS } from '../../components/AddonModal';
 
 const AVATARS = ['#006D77', '#E29578', '#4A90D9', '#9B59B6', '#F4A261', '#2A9D8F'];
 
@@ -104,7 +105,8 @@ function parseApiMenuData(rawData, visibleDays = []) {
       isVegan: !!(item.vegan || item.isVegan || item.is_vegan),
       isGlutenFree: !!(item.glutenFree || item.isGlutenFree || item.is_gluten_free),
       isAllergen: !!(item.allergens?.length || item.is_allergen || item.isAllergen),
-      addonsCount: Array.isArray(item.addon) ? item.addon.length : (item.addonsCount || 0)
+      addonsCount: Array.isArray(item.addon) ? item.addon.length : (item.addonsCount !== undefined ? item.addonsCount : (item.name?.toLowerCase().includes('wings') ? 3 : 0)),
+      addons: Array.isArray(item.addon) ? item.addon : (Array.isArray(item.addons) ? item.addons : undefined)
     };
 
     if (result[dayName]) {
@@ -183,6 +185,43 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
     }
   });
 
+  // Addon Modal State
+  const [addonModal, setAddonModal] = useState({
+    isOpen: false,
+    childId: null,
+    day: null,
+    item: null,
+    qty: 1
+  });
+
+  // Selected Addons Map: `${childId}_${day}_${itemId}` -> { [instanceIdx]: [addonId, ...] }
+  const [selectedAddonsMap, setSelectedAddonsMap] = useState({});
+
+  const handleOpenAddons = (childId, day, item, currentQty) => {
+    const qty = currentQty > 0 ? currentQty : 1;
+    if (currentQty === 0) {
+      updateQty(childId, day, item.id, 1);
+    }
+    setAddonModal({
+      isOpen: true,
+      childId,
+      day,
+      item,
+      qty
+    });
+  };
+
+  const handleSaveAddons = (selections) => {
+    if (!addonModal.item) return;
+    const key = `${addonModal.childId}_${addonModal.day}_${addonModal.item.id}`;
+    setSelectedAddonsMap(prev => ({
+      ...prev,
+      [key]: selections
+    }));
+    const totalCount = Object.values(selections).reduce((sum, list) => sum + (list?.length || 0), 0);
+    toast.success(`${totalCount} add-on${totalCount === 1 ? '' : 's'} saved for ${addonModal.item.name}!`);
+  };
+
   const fetchDashboard = async () => {
     setLoading(true);
     setErrorMsg('');
@@ -192,9 +231,9 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
         setSummary(res.data);
         if (res.data.summary) {
           const funds = parseFloat(res.data.summary.availableFunds) || 0;
-          const owed  = parseFloat(res.data.summary.amountOwed)     || 0;
+          const owed = parseFloat(res.data.summary.amountOwed) || 0;
           if (setAvailableFunds) setAvailableFunds(funds);
-          if (setAmountOwed)     setAmountOwed(owed);
+          if (setAmountOwed) setAmountOwed(owed);
         }
         // Expand first child by default if available
         if (Array.isArray(res.data.children) && res.data.children.length > 0) {
@@ -215,8 +254,8 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
     fetchDashboard();
   }, []);
 
-  const parent   = summary?.parent  || {};
-  const sumData  = summary?.summary || {};
+  const parent = summary?.parent || {};
+  const sumData = summary?.summary || {};
   const children = Array.isArray(summary?.children) ? summary.children : [];
   const firstName = parent.firstName || parent.first_name || '';
 
@@ -243,10 +282,11 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
 
   const handleFirstItemAllDays = (childId) => {
     const cid = childId ?? 'default';
+    const activeMenu = parseApiMenuData(apiMenus[childId]);
     setMenuQuantities(prev => {
       const childData = { ...(prev[cid] || {}) };
-      Object.keys(WEEKLY_MENU).forEach(day => {
-        const firstItem = WEEKLY_MENU[day].items[0];
+      Object.keys(activeMenu).forEach(day => {
+        const firstItem = activeMenu[day]?.items[0];
         if (firstItem) {
           childData[day] = {
             ...(childData[day] || {}),
@@ -269,6 +309,8 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
     const childSelections = menuQuantities[cid] || {};
     let totalItems = 0;
 
+    const activeMenu = parseApiMenuData(apiMenus[child?.id]);
+
     Object.keys(childSelections).forEach(day => {
       Object.keys(childSelections[day]).forEach(itemId => {
         const qty = childSelections[day][itemId];
@@ -276,24 +318,33 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
           totalItems += qty;
           // Find item details
           let itemDetails = null;
-          Object.values(WEEKLY_MENU).forEach(d => {
-            const found = d.items.find(i => i.id === itemId);
+          Object.values(activeMenu).forEach(d => {
+            const found = d.items?.find(i => i.id === itemId);
             if (found) itemDetails = found;
           });
           if (itemDetails) {
+            const addonKey = `${cid}_${day}_${itemId}`;
+            const addonSelections = selectedAddonsMap[addonKey] || {};
+            const flatAddonIds = Object.values(addonSelections).flat();
+            const addonsList = flatAddonIds.map(aid => {
+              const def = DEFAULT_ADDONS.find(a => a.id === aid);
+              return def ? def.name : aid;
+            });
+
             addToCart({
-              studentName: child?.name || 'Student',
+              studentName: child?.name || child?.first_name || 'Student',
               itemName: itemDetails.name,
               price: itemDetails.price,
               quantity: qty,
-              day
+              day,
+              addons: addonsList
             });
           }
         }
       });
     });
 
-    toast.success(`Order summary updated for ${child?.name || 'child'}!`);
+    toast.success(`Order summary updated for ${child?.name || child?.first_name || 'child'}!`);
     navigate('/shoppingcart');
   };
 
@@ -351,7 +402,7 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatChip icon="lni-dollar" label="Available Funds" value={`$${parseFloat(sumData.availableFunds || 0).toFixed(2)}`} color="#006D77" bg="#E6F4F5" />
         <StatChip icon="lni-alarm" label="Amount Owed" value={`$${parseFloat(sumData.amountOwed || 0).toFixed(2)}`} color="#E54A4A" bg="#FEF2F2" />
-        <StatChip icon="lni-cart-alt" label="Cart Items" value={sumData.cartCount || 0} color="#4A90D9" bg="#EFF6FF" />
+        <StatChip icon="lni-cart" label="Cart Items" value={sumData.cartCount || 0} color="#4A90D9" bg="#EFF6FF" onClick={() => navigate('/shoppingcart')} />
         <StatChip icon="lni-users" label="Children" value={children.length} color="#9B59B6" bg="#F5F3FF" />
       </div>
 
@@ -368,15 +419,15 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
         <>
           <div className="student-cards-list">
             {children.map((child, i) => {
-              const childId  = child.id ?? i;
+              const childId = child.id ?? i;
               const isExpanded = expandedChildId === childId;
               const fullName = child.name || `${child.firstName || ''} ${child.lastName || ''}`.trim() || 'Jane Doe';
               const initials = fullName.split(' ').map(n => n[0] || '').join('').toUpperCase().slice(0, 2);
-              const campus   = child.campusName || child.campusInfo?.name || 'Valleyview Middle New';
-              const grade    = child.gradeName  || child.gradeInfo?.name  || '6';
-              const room     = child.className  || child.classInfo?.name  || '1';
-              const balance  = child.balance || child.owed || (45.60 - i * 20).toFixed(2);
-              const cidKey   = childId ?? 'default';
+              const campus = child.campusName || child.campusInfo?.name || 'Valleyview Middle New';
+              const grade = child.gradeName || child.gradeInfo?.name || '6';
+              const room = child.className || child.classInfo?.name || '1';
+              const balance = child.balance || child.owed || (45.60 - i * 20).toFixed(2);
+              const cidKey = childId ?? 'default';
               const childQuantities = menuQuantities[cidKey] || {};
 
               return (
@@ -406,9 +457,9 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                         <button className="action-icon-btn" title="Expand Menu Accordion" onClick={(e) => { e.stopPropagation(); setExpandedChildId(childId); }}>
                           <i className="lni lni-chevron-down" />
                         </button>
-                        <button className="action-icon-btn" title="Edit student profile" onClick={(e) => { e.stopPropagation(); navigate('/children'); }}>
+                        {/* <button className="action-icon-btn" title="Edit student profile" onClick={(e) => { e.stopPropagation(); navigate('/children'); }}>
                           <i className="lni lni-pencil" />
-                        </button>
+                        </button> */}
                       </div>
                     </div>
                   ) : (
@@ -426,13 +477,13 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                               className="accordion-input-pill"
                               value={fullName}
                               readOnly
-                              style={{ width: 130, marginBottom: 4 }}
+                              style={{ width: 115, marginBottom: 3 }}
                             />
                             <select
                               className="accordion-input-pill"
                               value={selectedMonth}
                               onChange={(e) => setSelectedMonth(e.target.value)}
-                              style={{ display: 'block', cursor: 'pointer' }}
+                              style={{ width: 115, display: 'block', cursor: 'pointer' }}
                             >
                               <option value="August 2026">August 2026</option>
                               <option value="September 2026">September 2026</option>
@@ -463,7 +514,7 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                           </div>
 
                           {/* Copy Order From */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#64748B' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748B', whiteSpace: 'nowrap' }}>
                             <span>Copy order from</span>
                             <select
                               className="accordion-input-pill"
@@ -472,6 +523,7 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                                 setCopyFromStudent(e.target.value);
                                 handleCopyOrder(childId, e.target.value);
                               }}
+                              style={{ width: 110, cursor: 'pointer' }}
                             >
                               <option value="">Select student</option>
                               {children.filter(c => (c.id ?? i) !== childId).map(c => (
@@ -480,21 +532,19 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                             </select>
                           </div>
 
-                          {/* FIRST ITEM FOR ALL DAYS Button */}
-                          <button
-                            className="btn-first-item-all"
-                            onClick={() => handleFirstItemAllDays(childId)}
-                          >
-                            FIRST ITEM FOR ALL DAYS
-                          </button>
+                          {/* Balance amount badge */}
+                          <div className="amount-badge" style={{ fontSize: 15, whiteSpace: 'nowrap' }}>
+                            ${parseFloat(balance || 0).toFixed(2)}
+                          </div>
 
                           {/* Collapse button */}
                           <button
                             className="action-icon-btn"
                             title="Collapse accordion"
                             onClick={() => setExpandedChildId(null)}
+                            style={{ width: 30, height: 30 }}
                           >
-                            <i className="lni lni-chevron-up" />
+                            <i className="lni lni-chevron-up" style={{ fontSize: 12 }} />
                           </button>
                         </div>
                       </div>
@@ -502,11 +552,36 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                       {/* ── View 1: Week View Carousel ── */}
                       {menuViewType === 'Week' ? (() => {
                         const { weekDays } = getWeekDates(weekOffset);
-                        // Filter so ONLY current date (today) to further dates are visible
-                        const visibleDays = weekDays.filter(d => !d.isPast);
+                        const visibleDays = weekDays;
 
                         return (
-                          <div className="accordion-carousel-wrapper" style={{ flexDirection: 'column', gap: 8 }}>
+                          <div className="accordion-carousel-wrapper" style={{ flexDirection: 'column', gap: 10 }}>
+                            {/* Second Line Bar: Date Range (Left) and FIRST ITEM FOR ALL DAYS (Right Corner) */}
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              width: '100%',
+                              padding: '0 4px',
+                              marginBottom: 2
+                            }}>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: '#006D77', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <i className="lni lni-calendar" />
+                                {visibleDays.length > 0
+                                  ? `${visibleDays[0].formattedDate} - ${visibleDays[visibleDays.length - 1].formattedDate} (${weekOffset === 0 ? 'Current Week' : `+${weekOffset} Week`})`
+                                  : 'No upcoming dates'
+                                }
+                              </span>
+
+                              <button
+                                className="btn-first-item-all"
+                                onClick={() => handleFirstItemAllDays(childId)}
+                                title="First order for all days"
+                              >
+                                FIRST ITEM FOR ALL DAYS
+                              </button>
+                            </div>
+
                             <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 12 }}>
                               <button
                                 className="carousel-nav-btn"
@@ -522,23 +597,6 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                               </button>
 
                               <div style={{ flex: 1 }}>
-                                {/* Date Range Indicator Bar */}
-                                <div style={{
-                                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                  marginBottom: 8, padding: '0 4px'
-                                }}>
-                                  <span style={{ fontSize: 13, fontWeight: 700, color: '#006D77', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <i className="lni lni-calendar" />
-                                    {visibleDays.length > 0
-                                      ? `${visibleDays[0].formattedDate} - ${visibleDays[visibleDays.length - 1].formattedDate} (${weekOffset === 0 ? 'Current Week' : `+${weekOffset} Week`})`
-                                      : 'No upcoming dates'
-                                    }
-                                  </span>
-                                  <span style={{ fontSize: 11.5, color: '#64748B', fontWeight: 500 }}>
-                                    Current & Future Dates Only ({visibleDays.length} Days)
-                                  </span>
-                                </div>
-
                                 {loadingMenu ? (
                                   <div className="weekly-columns-grid">
                                     {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((day, idx) => (
@@ -596,17 +654,34 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                                                       </div>
 
                                                       <div className="accordion-food-bottom">
-                                                        <div className="accordion-qty-box">
-                                                          <button className="accordion-qty-btn" onClick={() => updateQty(childId, day, item.id, -1)}>-</button>
-                                                          <span className="accordion-qty-val">{currentQty}</span>
-                                                          <button className="accordion-qty-btn" onClick={() => updateQty(childId, day, item.id, 1)}>+</button>
-                                                        </div>
+                                                        <div className="accordion-food-bottom-left">
+                                                          <div className="accordion-qty-box">
+                                                            <button className="accordion-qty-btn" onClick={() => updateQty(childId, day, item.id, -1)}>-</button>
+                                                            <span className="accordion-qty-val">{currentQty}</span>
+                                                            <button className="accordion-qty-btn" onClick={() => updateQty(childId, day, item.id, 1)}>+</button>
+                                                          </div>
 
-                                                        {item.addonsCount > 0 && (
-                                                          <button className="addons-pill-btn" onClick={() => toast.info('Manage add-ons')}>
-                                                            {item.addonsCount} addons
-                                                          </button>
-                                                        )}
+                                                          {/* Addons Pill Button */}
+                                                          {(() => {
+                                                            const addonKey = `${childId}_${day}_${item.id}`;
+                                                            const hasSelections = selectedAddonsMap[addonKey] !== undefined;
+                                                            const addonCount = hasSelections
+                                                              ? Object.values(selectedAddonsMap[addonKey]).reduce((sum, list) => sum + (list?.length || 0), 0)
+                                                              : (item.addonsCount !== undefined ? item.addonsCount : 0);
+
+                                                            if (!addonCount || addonCount <= 0) return null;
+
+                                                            return (
+                                                              <button
+                                                                className="addons-pill-btn"
+                                                                onClick={() => handleOpenAddons(childId, day, item, currentQty)}
+                                                                title="Manage add-ons"
+                                                              >
+                                                                {addonCount} addons
+                                                              </button>
+                                                            );
+                                                          })()}
+                                                        </div>
 
                                                         <span className="accordion-food-price">${item.price.toFixed(2)}</span>
                                                       </div>
@@ -635,32 +710,51 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                         );
                       })() : (
                         /* ── View 2: Month View Calendar Grid ── */
-                        <div className="month-calendar-grid">
-                          {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map(dName => (
-                            <div className="month-day-header" key={dName}>{dName}</div>
-                          ))}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'flex-end',
+                            width: '100%',
+                            padding: '0 4px',
+                            marginBottom: 2
+                          }}>
+                            <button
+                              className="btn-first-item-all"
+                              onClick={() => handleFirstItemAllDays(childId)}
+                              title="First order for all days"
+                            >
+                              FIRST ITEM FOR ALL DAYS
+                            </button>
+                          </div>
 
-                          {MONTH_GRID_DAYS.map((cell, idx) => (
-                            <div className="month-day-cell" key={idx}>
-                              <span className="month-day-number">{cell.day}</span>
-                              {cell.count && (
-                                <div className="month-order-card">
-                                  <div className="month-order-card-header">
-                                    <span className="month-order-card-title">{cell.count} products - {cell.price}$</span>
-                                    <button className="month-order-card-edit-btn" onClick={() => setMenuViewType('Week')}>
-                                      <i className="lni lni-pencil" />
-                                    </button>
+                          <div className="month-calendar-grid">
+                            {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map(dName => (
+                              <div className="month-day-header" key={dName}>{dName}</div>
+                            ))}
+
+                            {MONTH_GRID_DAYS.map((cell, idx) => (
+                              <div className="month-day-cell" key={idx}>
+                                <span className="month-day-number">{cell.day}</span>
+                                {cell.count && (
+                                  <div className="month-order-card">
+                                    <div className="month-order-card-header">
+                                      <span className="month-order-card-title">{cell.count} products - {cell.price}$</span>
+                                      <button className="month-order-card-edit-btn" onClick={() => setMenuViewType('Week')}>
+                                        <i className="lni lni-pencil" />
+                                      </button>
+                                    </div>
+                                    <div className="month-order-item-list">
+                                      <div>1x Veggie Burger</div>
+                                      <div>1x Roast Beef Sandwich</div>
+                                      <div>1x Apple Juice</div>
+                                      <div>2x Apple Pie</div>
+                                    </div>
                                   </div>
-                                  <div className="month-order-item-list">
-                                    <div>1x Veggie Burger</div>
-                                    <div>1x Roast Beef Sandwich</div>
-                                    <div>1x Apple Juice</div>
-                                    <div>2x Apple Pie</div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -702,25 +796,45 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
           </div>
 
           <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 24 }}>
-            <button className="btn-primary" style={{ padding: '12px 28px', fontSize: 14, fontWeight: 700, borderRadius: 8, letterSpacing: 0.5 }} onClick={() => navigate('/shoppingcart')}>
+            <button className="btn-primary" style={{ padding: '12px 28px', fontSize: 14, fontWeight: 700, borderRadius: 8, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => navigate('/shoppingcart')}>
+              <i className="lni lni-cart" style={{ fontSize: 16 }} />
               PROCEED TO CHECKOUT →
             </button>
           </div>
         </>
       )}
+
+      {/* ── Addons Modal Popup ── */}
+      <AddonModal
+        isOpen={addonModal.isOpen}
+        onClose={() => setAddonModal(prev => ({ ...prev, isOpen: false }))}
+        item={addonModal.item}
+        qty={addonModal.qty}
+        initialSelections={
+          addonModal.item
+            ? selectedAddonsMap[`${addonModal.childId}_${addonModal.day}_${addonModal.item.id}`] || {}
+            : {}
+        }
+        onSave={handleSaveAddons}
+      />
     </>
   );
 };
 
 /* ── Small Helper: stat chip ── */
-function StatChip({ icon, label, value, color, bg }) {
+function StatChip({ icon, label, value, color, bg, onClick }) {
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 12,
-      background: '#fff', border: '1px solid #E5E7EB',
-      borderRadius: 12, padding: '14px 20px',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.05)', flex: '1 1 160px'
-    }}>
+    <div
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        background: '#fff', border: '1px solid #E5E7EB',
+        borderRadius: 12, padding: '14px 20px',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.05)', flex: '1 1 160px',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'all 0.2s ease',
+      }}
+    >
       <div style={{ width: 40, height: 40, borderRadius: 10, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <i className={`lni ${icon}`} style={{ fontSize: 18, color }} />
       </div>

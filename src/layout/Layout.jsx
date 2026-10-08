@@ -4,12 +4,12 @@ import { toast } from 'react-toastify';
 
 const menuItems = [
   { title: 'Home', icon: 'lni lni-home', link: 'dashboard' },
-  { title: 'Children', icon: 'lni lni-friends', link: 'children' },
-  { title: 'My Orders', icon: 'lni lni-box-cart', link: 'myorders' },
-  { title: 'Shopping Cart', icon: 'lni lni-cart-alt', link: 'shoppingcart', badge: true },
-  { title: 'Credit History', icon: 'lni lni-clock-dollar', link: 'credithistory' },
+  { title: 'Children', icon: 'lni lni-users', link: 'children' },
+  { title: 'My Orders', icon: 'lni lni-package', link: 'myorders' },
+  { title: 'Shopping Cart', icon: 'lni lni-cart', link: 'shoppingcart', badge: true },
+  { title: 'Credit History', icon: 'lni lni-timer', link: 'credithistory' },
   { title: 'Lunch Card', icon: 'lni lni-postcard', link: 'lunchcard' },
-  { title: 'Profile Settings', icon: 'lni lni-user-settings', link: 'profilesetting' },
+  { title: 'Profile Settings', icon: 'lni lni-cog', link: 'profilesetting' },
 ];
 
 function AddFundsModal({ onClose, setAvailableFunds }) {
@@ -161,7 +161,7 @@ const Layout = ({ cartCount, cartTotal = 0, availableFunds = 0, amountOwed = 0, 
             {/* Cart */}
             <NavLink to="/shoppingcart" className="navbar-cart">
               <span>Cart ${(parseFloat(cartTotal) || 0).toFixed(2)}</span>
-              <i className="lni lni-cart-alt" style={{ fontSize: 18 }} />
+              <i className="lni lni-cart" style={{ fontSize: 18 }} />
               {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}
             </NavLink>
 

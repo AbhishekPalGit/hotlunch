@@ -314,7 +314,7 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
                           </div>
 
                           {/* Addons Counter Indicator */}
-                          {item.addonsCount !== undefined && (
+                          {Boolean(item.addonsCount && item.addonsCount > 0) && (
                             <button style={styles.addonsBtn} onClick={() => alert('Manage Add-ons dialog')}>
                               {item.addonsCount} Addons <i className="lni lni-chevron-right" style={{ fontSize: '9px' }}></i>
                             </button>

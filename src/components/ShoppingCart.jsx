@@ -5,7 +5,7 @@ const ShoppingCart = ({ cartItems, removeFromCart, setActiveTab, cartTotal }) =>
     <div style={styles.container}>
       <div style={styles.header}>
         <h2>
-          <i className="lni lni-cart-alt" style={{ marginRight: '10px', color: 'var(--primary)' }}></i>
+          <i className="lni lni-cart" style={{ marginRight: '10px', color: 'var(--primary)' }}></i>
           Shopping Cart
         </h2>
         <p className="text-muted">Review items in your cart before finalizing payment.</p>
@@ -57,7 +57,7 @@ const ShoppingCart = ({ cartItems, removeFromCart, setActiveTab, cartTotal }) =>
                 ) : (
                   <tr>
                     <td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-gray)' }}>
-                      <i className="lni lni-cart-alt" style={{ fontSize: '32px', marginBottom: '10px', display: 'block', color: 'var(--primary-light)' }}></i>
+                      <i className="lni lni-cart" style={{ fontSize: '32px', marginBottom: '10px', display: 'block', color: 'var(--primary-light)' }}></i>
                       Your shopping cart is currently empty. Go to the Home tab to place weekly lunch orders.
                     </td>
                   </tr>

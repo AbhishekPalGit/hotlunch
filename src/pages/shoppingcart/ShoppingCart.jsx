@@ -164,7 +164,7 @@ const ShoppingCart = () => {
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h1 className="page-title">
-            <i className="lni lni-cart-alt" style={{ fontSize: 22 }} /> Shopping Cart
+            <i className="lni lni-cart" style={{ fontSize: 22 }} /> Shopping Cart
           </h1>
           {flatItems.length > 0 && (
             <button
@@ -192,7 +192,7 @@ const ShoppingCart = () => {
         <ShimmerCart />
       ) : flatItems.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 0', color: '#9CA3AF' }}>
-          <i className="lni lni-cart-alt" style={{ fontSize: 52, display: 'block', marginBottom: 12 }} />
+          <i className="lni lni-cart" style={{ fontSize: 52, display: 'block', marginBottom: 12 }} />
           <p style={{ fontSize: 16 }}>Your cart is empty.</p>
           <button className="btn-primary" style={{ marginTop: 16 }} onClick={() => navigate('/dashboard')}>
             Browse Menu

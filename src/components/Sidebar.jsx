@@ -3,12 +3,12 @@ import React from 'react';
 const Sidebar = ({ activeTab, setActiveTab, cartItemsCount, mobileOpen, setMobileOpen }) => {
   const menuItems = [
     { id: 'home', label: 'Home', icon: 'lni-home' },
-    { id: 'children', label: 'Children', icon: 'lni-friends' },
-    { id: 'orders', label: 'My Orders', icon: 'lni-postcard' },
-    { id: 'cart', label: 'Shopping Cart', icon: 'lni-cart-alt', badge: cartItemsCount },
-    { id: 'credits', label: 'Credit History', icon: 'lni-clock-dollar' },
+    { id: 'children', label: 'Children', icon: 'lni-users' },
+    { id: 'orders', label: 'My Orders', icon: 'lni-package' },
+    { id: 'cart', label: 'Shopping Cart', icon: 'lni-cart', badge: cartItemsCount },
+    { id: 'credits', label: 'Credit History', icon: 'lni-timer' },
     { id: 'lunchcard', label: 'Lunch Card', icon: 'lni-credit-cards' },
-    { id: 'profile', label: 'Profile Settings', icon: 'lni-user-settings' }
+    { id: 'profile', label: 'Profile Settings', icon: 'lni-cog' }
   ];
 
   return (
