@@ -11,15 +11,8 @@ const MyOrders = ({ activeTab, setActiveTab }) => {
   const [searchCampus, setSearchCampus] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
 
-  // Mock Orders Data (Screenshot 8)
-  const [orders, setOrders] = useState([
-    { id: '4066751', studentName: 'Jane Doe', menuName: 'August 2023', campus: 'Valleyview Middle New', orderedOn: 'Aug 11, 23 8:45 PM', amount: 35.00, creditUsed: 0.00, cancellations: 0.00, paidDue: 35.00, status: 'PAID', grade: '6', classroom: '1' },
-    { id: '4067283', studentName: 'John Doe', menuName: 'August 2023', campus: 'Valleyview Middle New', orderedOn: 'Aug 11, 23 8:45 PM', amount: 49.00, creditUsed: 0.00, cancellations: 0.00, paidDue: 49.00, status: 'UNPAID', grade: '1', classroom: '6' },
-    { id: '4067284', studentName: 'Jane Doe', menuName: 'August 2023', campus: 'Valleyview Middle New', orderedOn: 'Aug 11, 23 8:45 PM', amount: 50.00, creditUsed: 0.00, cancellations: 0.00, paidDue: 50.00, status: 'PAID', grade: '6', classroom: '1' },
-    { id: '4067285', studentName: 'Jane Doe', menuName: 'August 2023', campus: 'Valleyview Middle New', orderedOn: 'Aug 11, 23 8:45 PM', amount: 60.00, creditUsed: 0.00, cancellations: 15.00, paidDue: 45.00, status: 'UNPAID', grade: '6', classroom: '1' },
-    { id: '4067286', studentName: 'Jane Doe', menuName: 'August 2023', campus: 'Valleyview Middle New', orderedOn: 'Aug 11, 23 8:45 PM', amount: 60.00, creditUsed: 0.00, cancellations: 0.00, paidDue: 0.00, status: 'CANCELLED', grade: '6', classroom: '1' },
-    { id: '4067287', studentName: 'Jane Doe', menuName: 'August 2023', campus: 'Valleyview Middle New', orderedOn: 'Aug 11, 23 8:45 PM', amount: 50.00, creditUsed: 0.00, cancellations: 0.00, paidDue: 0.00, status: 'DELETED', grade: '6', classroom: '1' }
-  ]);
+  // Orders Data
+  const [orders, setOrders] = useState([]);
 
   const handleOpenInvoice = (order) => {
     setSelectedOrder(order);

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
+import CartHoverPopup from '../components/CartHoverPopup';
 
 const menuItems = [
   { title: 'Home', icon: 'lni lni-home', link: 'dashboard' },
@@ -40,15 +41,32 @@ function AddFundsModal({ onClose, setAvailableFunds }) {
   );
 }
 
-const Layout = ({ cartCount, cartTotal = 0, availableFunds = 0, amountOwed = 0, userName, setAvailableFunds, setAmountOwed, onSignOut }) => {
+const Layout = ({ cartItems = [], cartCount = 0, cartTotal = 0, availableFunds = 0, amountOwed = 0, userName = '', setAvailableFunds, setAmountOwed, onSignOut }) => {
   const navigate = useNavigate();
   const [showAddFunds, setShowAddFunds] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isCartHovered, setIsCartHovered] = useState(false);
+  const hoverTimeoutRef = useRef(null);
+
+  const effectiveCartItems = cartItems || [];
+  const effectiveCartTotal = cartTotal || 0;
+  const effectiveCartCount = cartCount !== undefined ? cartCount : 0;
+
+  const handleCartMouseEnter = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    setIsCartHovered(true);
+  };
+
+  const handleCartMouseLeave = () => {
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsCartHovered(false);
+    }, 250);
+  };
 
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const initials = userName ? userName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'JD';
+  const initials = userName ? userName.split(' ').map(n => n[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) : 'U';
 
   const handlePayNow = () => navigate('/checkout');
   const handleSignOut = () => {
@@ -158,12 +176,26 @@ const Layout = ({ cartCount, cartTotal = 0, availableFunds = 0, amountOwed = 0, 
               <button className="btn-pay-now" onClick={handlePayNow}>PAY NOW</button>
             </div>
 
-            {/* Cart */}
-            <NavLink to="/shoppingcart" className="navbar-cart">
-              <span>Cart ${(parseFloat(cartTotal) || 0).toFixed(2)}</span>
-              <i className="lni lni-cart" style={{ fontSize: 18 }} />
-              {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}
-            </NavLink>
+            {/* Cart with hover popup */}
+            <div 
+              className="navbar-cart-container"
+              onMouseEnter={handleCartMouseEnter}
+              onMouseLeave={handleCartMouseLeave}
+            >
+              <NavLink to="/shoppingcart" className="navbar-cart">
+                <span>Cart ${(parseFloat(effectiveCartTotal) || 0).toFixed(2)}</span>
+                <i className="lni lni-cart" style={{ fontSize: 18 }} />
+                {effectiveCartCount > 0 && <span className="cart-badge">{effectiveCartCount}</span>}
+              </NavLink>
+
+              {isCartHovered && (
+                <CartHoverPopup
+                  cartItems={effectiveCartItems}
+                  cartTotal={effectiveCartTotal}
+                  onClose={() => setIsCartHovered(false)}
+                />
+              )}
+            </div>
 
             {/* Bell */}
             <button className="navbar-bell">

@@ -11,38 +11,16 @@ import {
 } from '../../services/api';
 import { ShimmerTable } from '../../components/Shimmer';
 
-const DEFAULT_STUDENTS = [
-  { id: 1, name: 'John Doe', studentId: 'VMW174', campus: 'Valleyview Middle New', grade: 'Grade 1', classroom: 'Class A', program: '--' },
-  { id: 2, name: 'Jane Doe', studentId: 'VMW175', campus: 'Valleyview Middle New', grade: '6 New 1', classroom: 'Default 1', program: '--' },
-];
-
-const DEFAULT_GRADES = [
-  { id: 1, name: 'Grade 1' },
-  { id: 2, name: 'Grade 2' },
-  { id: 3, name: 'Grade 3' },
-  { id: 4, name: 'Grade 4' },
-  { id: 5, name: 'Grade 5' },
-  { id: 6, name: 'Grade 6' },
-  { id: 7, name: 'Grade 7' },
-  { id: 8, name: 'Grade 8' }
-];
-
-const DEFAULT_CLASSROOMS = [
-  { id: 101, name: 'Room 101 - Mrs. Smith' },
-  { id: 102, name: 'Room 102 - Mr. Johnson' },
-  { id: 103, name: 'Room 103 - Ms. Davis' }
-];
-
 function ChildModal({ student, onClose, onSave }) {
   const [name, setName] = useState(student?.name || '');
   const [studentId, setStudentId] = useState(student?.studentId || '');
-  const [campusCode, setCampusCode] = useState(student?.campusCode || 'SCH001');
-  const [verifiedCampus, setVerifiedCampus] = useState(student?.campus ? { name: student.campus, campusId: 465 } : null);
+  const [campusCode, setCampusCode] = useState(student?.campusCode || '');
+  const [verifiedCampus, setVerifiedCampus] = useState(student?.campus ? { name: student.campus, campusId: student.campusId || 465 } : null);
   const [verifyingCampus, setVerifyingCampus] = useState(false);
   const [campusError, setCampusError] = useState('');
 
-  const [gradesList, setGradesList] = useState(DEFAULT_GRADES);
-  const [classroomsList, setClassroomsList] = useState(DEFAULT_CLASSROOMS);
+  const [gradesList, setGradesList] = useState([]);
+  const [classroomsList, setClassroomsList] = useState([]);
 
   const [grade, setGrade] = useState(student?.grade || '');
   const [classroom, setClassroom] = useState(student?.classroom || '');
@@ -57,10 +35,25 @@ function ChildModal({ student, onClose, onSave }) {
     setCampusError('');
     try {
       const res = await verifyCampusApi(campusCode.trim());
-      if (res && (res.status === 'success' || res.campusId)) {
+      if (res && (res.status === 'success' || res.campusId || res.data)) {
+        const cid = parseInt(
+          res.campusId ??
+          res.campus_id ??
+          res.data?.campusId ??
+          res.data?.campus_id ??
+          res.data?.id ??
+          res.id ??
+          (!isNaN(parseInt(campusCode.trim(), 10)) ? campusCode.trim() : 465),
+          10
+        ) || 465;
+
+        const cName = (typeof res.data === 'string' ? res.data : (res.data?.name || res.data?.campusName))
+          || res.campusName
+          || 'Loyola Main Campus';
+
         const campusInfo = {
-          campusId: res.campusId || 465,
-          name: res.data || res.campusName || 'Loyola Main Campus'
+          campusId: cid,
+          name: cName
         };
         setVerifiedCampus(campusInfo);
         toast.success(`Campus verified: ${campusInfo.name}`);
@@ -130,7 +123,7 @@ function ChildModal({ student, onClose, onSave }) {
         <div className="form-grid" style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
           <div className="form-group" style={{ gridColumn: 'span 2' }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Full Name</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. John Doe" />
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Enter student name" />
           </div>
 
           <div className="form-group">
@@ -248,13 +241,13 @@ const ChildrenPage = () => {
         });
         setStudents(mapped);
       } else {
-        setStudents(DEFAULT_STUDENTS);
+        setStudents([]);
       }
     } catch (err) {
       console.error('Failed to fetch children:', err);
       const msg = err.response?.data?.detail?.message || err.response?.data?.message || 'Unable to load children from server.';
       setErrorMsg(msg);
-      setStudents(DEFAULT_STUDENTS);
+      setStudents([]);
     } finally {
       setLoading(false);
     }
@@ -288,6 +281,7 @@ const ChildrenPage = () => {
           firstName: parts[0] || 'Student',
           lastName: parts.slice(1).join(' ') || 'User',
           campusId: parseInt(form.campusId || 465, 10) || 465,
+          campusCode: parseInt(form.campusId || 465, 10) || 465,
           grade: parseInt(form.gradeId || 1, 10) || 1,
           classroom: parseInt(form.classroomId || 101, 10) || 101,
           allergens: [],

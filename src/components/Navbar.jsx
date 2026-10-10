@@ -1,18 +1,20 @@
 import React from 'react';
 
 const Navbar = ({ 
-  userName = "John Doe", 
-  availableFunds = 120.00, 
-  amountOwed = 120.00, 
-  cartTotal = 50.00, 
-  cartCount = 7, 
+  userName = "User", 
+  availableFunds = 0.00, 
+  amountOwed = 0.00, 
+  cartTotal = 0.00, 
+  cartCount = 0, 
   setActiveTab,
   onAddFunds,
   onPayNow,
   setMobileOpen
 }) => {
-  // Current formatted date/time matching Screenshot 2
-  const formattedDateTime = "Monday, Aug 12 14:30 PM";
+  // Current formatted date/time
+  const now = new Date();
+  const formattedDateTime = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) + ' ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const initials = userName ? userName.split(' ').map(n => n[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) : 'U';
 
   return (
     <header style={styles.navbar}>
@@ -23,7 +25,7 @@ const Navbar = ({
           <i className="lni lni-menu" style={{ fontSize: '20px' }}></i>
         </button>
 
-        <div style={styles.avatar}>JD</div>
+        <div style={styles.avatar}>{initials}</div>
         <div>
           <div style={styles.welcomeText}>Welcome back, {userName}!</div>
           <div style={styles.dateText}>{formattedDateTime}</div>

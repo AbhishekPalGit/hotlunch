@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './layout/Layout';
 import LoginPage from './pages/login/LoginPage';
@@ -13,84 +13,197 @@ import ProfileSetting from './pages/profileSetting/ProfileSetting';
 import { getProfileApi, getDashboardSummaryApi, getCartApi } from './services/api';
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    return localStorage.getItem('is_logged_in') === 'true' || !!localStorage.getItem('access_token');
-  });
+  const [isLoggedIn, setIsLoggedIn] = useState(
+    () => localStorage.getItem('is_logged_in') === 'true' || !!localStorage.getItem('access_token')
+  );
 
   const [userName, setUserName] = useState(() => {
-    const savedUser = localStorage.getItem('user_details');
-    if (savedUser) {
+    const saved = localStorage.getItem('user_details');
+    if (saved) {
       try {
-        const parsed = JSON.parse(savedUser);
-        return parsed.name || parsed.firstName || parsed.first_name || 'User';
+        const u = JSON.parse(saved);
+        return u.name || `${u.firstName || u.first_name || ''} ${u.lastName || u.last_name || ''}`.trim() || 'User';
       } catch (e) {}
     }
-    return 'User';
+    return '';
   });
 
-  const [students] = useState([]);
+  const [availableFunds, setAvailableFunds] = useState(0);
+  const [amountOwed, setAmountOwed] = useState(0);
   const [cartItems, setCartItems] = useState([]);
-  const [availableFunds, setAvailableFunds] = useState(0.00);
-  const [amountOwed, setAmountOwed] = useState(0.00);
+  const [cartTotal, setCartTotal] = useState(0);
+  const [cartCount, setCartCount] = useState(0);
 
-  // Fetch real user & header details on page load / refresh
-  useEffect(() => {
-    if (!isLoggedIn) return;
+  // Sync / refresh Cart from backend API
+  const refreshCart = useCallback(async () => {
+    try {
+      const res = await getCartApi();
+      if (res && res.status === 'success') {
+        const data = res.data || [];
+        if (Array.isArray(data) && data.length > 0) {
+          const isGrouped = !!(data[0].childName || data[0].student || data[0].dates || data[0].items);
+          if (isGrouped) {
+            const flat = [];
+            data.forEach(group => {
+              const childName = group.childName || group.studentName || group.student || group.fullName || group.name || 'Student';
+              const dates = group.dates || [];
+              if (dates.length > 0) {
+                dates.forEach(dateBlock => {
+                  const dateLabel = dateBlock.displayDate || dateBlock.date || '--';
+                  const items = dateBlock.items || dateBlock.itemsArray || [];
+                  items.forEach(item => {
+                    flat.push({
+                      id: item.orderId || item.id,
+                      orderId: item.orderId || group.orderId,
+                      student: childName,
+                      studentName: childName,
+                      childName: childName,
+                      item: item.name || item.itemName || '--',
+                      date: dateLabel,
+                      price: parseFloat(item.price || 0),
+                      quantity: parseInt(item.quantity, 10) || 1,
+                      size: item.sizeLabel || item.size || item.portionSize || '',
+                      addons: item.addon || item.addons || [],
+                    });
+                  });
+                });
+              } else if (group.items && group.items.length > 0) {
+                group.items.forEach(item => {
+                  flat.push({
+                    id: item.orderId || item.id,
+                    orderId: item.orderId || group.orderId,
+                    student: childName,
+                    studentName: childName,
+                    childName: childName,
+                    item: item.name || item.itemName || '--',
+                    date: item.orderDate || '--',
+                    price: parseFloat(item.price || 0),
+                    quantity: parseInt(item.quantity, 10) || 1,
+                    size: item.sizeLabel || item.size || item.portionSize || '',
+                    addons: item.addon || item.addons || [],
+                  });
+                });
+              }
+            });
+            setCartItems(flat);
+            setCartCount(flat.reduce((sum, it) => sum + (it.quantity || 1), 0));
+            setCartTotal(flat.reduce((sum, it) => sum + (it.price * (it.quantity || 1)), 0));
+          } else {
+            setCartItems(data);
+            setCartCount(data.reduce((sum, it) => sum + (parseInt(it.quantity, 10) || 1), 0));
+            setCartTotal(data.reduce((sum, it) => sum + ((parseFloat(it.price) || 0) * (parseInt(it.quantity, 10) || 1)), 0));
+          }
+        } else {
+          setCartItems([]);
+          setCartCount(0);
+          setCartTotal(0);
+        }
+      } else {
+        setCartItems([]);
+        setCartCount(0);
+        setCartTotal(0);
+      }
+    } catch (err) {
+      console.log('Cart refresh notice in App:', err);
+    }
+  }, []);
 
-    // 1. User profile
-    getProfileApi().then(res => {
-      if (res && res.data) {
-        const u = res.data;
-        const name = u.name || u.firstName || `${u.first_name || ''} ${u.last_name || ''}`.trim();
-        if (name) {
-          setUserName(name);
-          localStorage.setItem('user_details', JSON.stringify(u));
+  // Fetch user profile and financial balance
+  const refreshUserData = useCallback(async () => {
+    try {
+      const [profileRes, summaryRes] = await Promise.allSettled([
+        getProfileApi(),
+        getDashboardSummaryApi()
+      ]);
+      if (profileRes.status === 'fulfilled' && profileRes.value?.status === 'success') {
+        const u = profileRes.value.data;
+        if (u) {
+          const name = u.name || `${u.firstName || u.first_name || ''} ${u.lastName || u.last_name || ''}`.trim();
+          if (name) setUserName(name);
         }
       }
-    }).catch(err => console.log('Profile fetch notice:', err));
-
-    // 2. Financial summary (Available Funds & Amount Owed)
-    getDashboardSummaryApi().then(res => {
-      if (res && res.status === 'success' && res.data?.summary) {
-        setAvailableFunds(parseFloat(res.data.summary.availableFunds) || 0);
-        setAmountOwed(parseFloat(res.data.summary.amountOwed) || 0);
+      if (summaryRes.status === 'fulfilled' && summaryRes.value?.status === 'success') {
+        const sumData = summaryRes.value.data?.summary;
+        if (sumData) {
+          if (sumData.availableFunds !== undefined) setAvailableFunds(parseFloat(sumData.availableFunds) || 0);
+          if (sumData.amountOwed !== undefined) setAmountOwed(parseFloat(sumData.amountOwed) || 0);
+        }
       }
-    }).catch(err => console.log('Summary fetch notice:', err));
+    } catch (e) {
+      console.log('User data refresh notice in App:', e);
+    }
+  }, []);
 
-    // 3. Live cart items
-    getCartApi().then(res => {
-      if (res && res.status === 'success' && Array.isArray(res.data?.items)) {
-        setCartItems(res.data.items);
-      }
-    }).catch(err => console.log('Cart fetch notice:', err));
-  }, [isLoggedIn]);
+  useEffect(() => {
+    if (isLoggedIn) {
+      refreshUserData();
+      refreshCart();
+    }
+  }, [isLoggedIn, refreshUserData, refreshCart]);
 
-  const addToCart = (item) => setCartItems(prev => [...prev, item]);
-  const removeFromCart = (idx) => setCartItems(prev => prev.filter((_, i) => i !== idx));
-  const clearCart = () => setCartItems([]);
-  const cartTotal = cartItems.reduce((acc, c) => acc + (parseFloat(c.price) || 0) * (parseInt(c.quantity, 10) || 1), 0);
-  const cartCount = cartItems.reduce((acc, c) => acc + (parseInt(c.quantity, 10) || 1), 0);
+  const addToCart = (item) => {
+    setCartItems(prev => {
+      const next = [...prev, item];
+      setCartCount(next.reduce((sum, it) => sum + (parseInt(it.quantity, 10) || 1), 0));
+      setCartTotal(next.reduce((sum, it) => sum + ((parseFloat(it.price) || 0) * (parseInt(it.quantity, 10) || 1)), 0));
+      return next;
+    });
+  };
+
+  const removeFromCart = (indexOrId) => {
+    setCartItems(prev => {
+      const next = typeof indexOrId === 'number'
+        ? prev.filter((_, idx) => idx !== indexOrId)
+        : prev.filter(item => item.id !== indexOrId && item.orderId !== indexOrId);
+      setCartCount(next.reduce((sum, it) => sum + (parseInt(it.quantity, 10) || 1), 0));
+      setCartTotal(next.reduce((sum, it) => sum + ((parseFloat(it.price) || 0) * (parseInt(it.quantity, 10) || 1)), 0));
+      return next;
+    });
+  };
+
+  const clearCart = () => {
+    setCartItems([]);
+    setCartCount(0);
+    setCartTotal(0);
+  };
 
   const handleLoginSuccess = (user) => {
     setIsLoggedIn(true);
-    if (user) {
-      const displayName = user.name || user.firstName || user.first_name || user.email?.split('@')[0] || 'User';
-      setUserName(displayName);
-    }
+    if (user?.name) setUserName(user.name);
+    refreshUserData();
+    refreshCart();
   };
 
   const handleSignOut = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
-    localStorage.removeItem('user_details');
     localStorage.removeItem('is_logged_in');
+    localStorage.removeItem('user_details');
     setIsLoggedIn(false);
+    setUserName('');
+    setAvailableFunds(0);
+    setAmountOwed(0);
+    setCartItems([]);
+    setCartCount(0);
+    setCartTotal(0);
   };
 
   const sharedProps = {
-    students, cartItems, addToCart, removeFromCart, clearCart,
-    cartTotal, cartCount, availableFunds, setAvailableFunds,
-    amountOwed, setAmountOwed, userName, setUserName
+    students: [],
+    cartItems,
+    addToCart,
+    removeFromCart,
+    clearCart,
+    refreshCart,
+    cartTotal,
+    cartCount,
+    availableFunds,
+    setAvailableFunds,
+    amountOwed,
+    setAmountOwed,
+    userName,
+    setUserName,
+    refreshUserData
   };
 
   return (
@@ -102,6 +215,7 @@ function App() {
       <Route path="/" element={
         isLoggedIn ? (
           <Layout
+            cartItems={cartItems}
             cartCount={cartCount}
             cartTotal={cartTotal}
             availableFunds={availableFunds}
@@ -116,7 +230,15 @@ function App() {
         )
       }>
         <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<Dashboard setAvailableFunds={setAvailableFunds} setAmountOwed={setAmountOwed} addToCart={addToCart} />} />
+        <Route path="dashboard" element={
+          <Dashboard 
+            cartItems={cartItems}
+            setAvailableFunds={setAvailableFunds} 
+            setAmountOwed={setAmountOwed} 
+            addToCart={addToCart} 
+            refreshCart={refreshCart} 
+          />
+        } />
         <Route path="children" element={<ChildrenPage {...sharedProps} />} />
         <Route path="myorders" element={<MyOrders {...sharedProps} />} />
         <Route path="shoppingcart" element={<ShoppingCart {...sharedProps} />} />

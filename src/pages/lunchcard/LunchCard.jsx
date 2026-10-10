@@ -1,20 +1,75 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import { getLunchCardApi } from '../../services/api';
+import { getLunchCardApi, getChildrenApi, getMenusApi, getMenusForChildApi } from '../../services/api';
 import { ShimmerLunchCards } from '../../components/Shimmer';
-
 
 const LunchCard = () => {
   const [intervalType, setIntervalType] = useState(1); // 1=daily, 2=weekly
   const [twoColumns, setTwoColumns]     = useState(true);
+  const [selectedChild, setSelectedChild] = useState('');
+  const [selectedMenu, setSelectedMenu]   = useState('');
+  const [children, setChildren]         = useState([]);
+  const [menus, setMenus]               = useState([]);
+  const [loadingMenus, setLoadingMenus] = useState(false);
   const [reportData, setReportData]     = useState(null);
   const [isLoading, setIsLoading]       = useState(false);
+
+  // Load children from API
+  useEffect(() => {
+    getChildrenApi()
+      .then(res => {
+        if (res && Array.isArray(res.data)) {
+          setChildren(res.data);
+        }
+      })
+      .catch(err => console.log('Children fetch notice in LunchCard:', err));
+  }, []);
+
+  // Load menus from API (general or scoped to child)
+  useEffect(() => {
+    setLoadingMenus(true);
+    const fetchCall = selectedChild ? getMenusForChildApi(selectedChild) : getMenusApi();
+    fetchCall
+      .then(res => {
+        let list = [];
+        if (res && res.status === 'success' && res.data) {
+          list = Array.isArray(res.data) ? res.data : (res.data.menus || []);
+        } else if (Array.isArray(res?.data)) {
+          list = res.data;
+        } else if (Array.isArray(res)) {
+          list = res;
+        }
+        const formatted = list.map((m, idx) => ({
+          id: String(m.id ?? m.menuId ?? idx + 1),
+          name: m.title || m.name || m.menuName || m.month || `Menu ${m.id ?? idx + 1}`,
+          startDate: m.startDate || m.start_date || '',
+          endDate: m.endDate || m.end_date || ''
+        }));
+        setMenus(formatted);
+      })
+      .catch(err => {
+        console.log('Menu fetch notice in LunchCard:', err);
+      })
+      .finally(() => setLoadingMenus(false));
+  }, [selectedChild]);
 
   const handleGenerate = async () => {
     setIsLoading(true);
     setReportData(null);
     try {
-      const res = await getLunchCardApi(intervalType, twoColumns);
+      const params = {
+        intervalType,
+        twoColumns
+      };
+      if (selectedChild) params.childId = selectedChild;
+      if (selectedMenu) {
+        params.menuId = selectedMenu;
+        const menuObj = menus.find(m => m.id === selectedMenu);
+        if (menuObj?.startDate) params.startDate = menuObj.startDate;
+        if (menuObj?.endDate) params.endDate = menuObj.endDate;
+      }
+
+      const res = await getLunchCardApi(params);
       if (res && res.status === 'success') {
         setReportData(res);
       } else {
@@ -53,6 +108,30 @@ const LunchCard = () => {
         <div className="card">
           <div className="card-body">
             <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: '#1F2937' }}>Report Options</h3>
+
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label>Student</label>
+              <select value={selectedChild} onChange={e => { setSelectedChild(e.target.value); setSelectedMenu(''); }}>
+                <option value="">All Students</option>
+                {children.map(c => {
+                  const sName = c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim() || `Student #${c.id}`;
+                  return <option key={c.id} value={c.id}>{sName}</option>;
+                })}
+              </select>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Menu</span>
+                {loadingMenus && <span style={{ fontSize: 11, color: '#006D77' }}>Loading...</span>}
+              </label>
+              <select value={selectedMenu} onChange={e => setSelectedMenu(e.target.value)} disabled={loadingMenus}>
+                <option value="">All Menus</option>
+                {menus.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </div>
 
             <div className="form-group" style={{ marginBottom: 16 }}>
               <label>Interval Type</label>

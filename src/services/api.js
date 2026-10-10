@@ -172,7 +172,14 @@ export const validateOrdersApi = async (data) => {
 };
 
 export const createOrderApi = async (data) => {
-  const response = await api.post('api/v1/orders', data);
+  const payload = { ...data };
+  if (!payload.typeId && payload.childId) {
+    payload.typeId = parseInt(payload.childId, 10);
+  }
+  if (payload.type === undefined || payload.type === null) {
+    payload.type = 5;
+  }
+  const response = await api.post('api/v1/orders', payload);
   return response.data;
 };
 
@@ -203,20 +210,41 @@ export const getDashboardSummaryApi = async () => {
 };
 
 /* ==========================================================================
-   MENUS APIs
+   MENUS APIs (Cached in-memory to prevent repeated redundant network requests)
    ========================================================================== */
-export const getMenusApi = async () => {
+const menusCache = new Map();
+
+export const clearMenusCache = () => {
+  menusCache.clear();
+};
+
+export const getMenusApi = async (forceRefresh = false) => {
+  const cacheKey = 'menus_all';
+  if (!forceRefresh && menusCache.has(cacheKey)) {
+    return menusCache.get(cacheKey);
+  }
   const response = await api.get('api/v1/menus');
+  menusCache.set(cacheKey, response.data);
   return response.data;
 };
 
-export const getMenusForChildApi = async (childId) => {
+export const getMenusForChildApi = async (childId, forceRefresh = false) => {
+  const cacheKey = `menus_child_${childId}`;
+  if (!forceRefresh && menusCache.has(cacheKey)) {
+    return menusCache.get(cacheKey);
+  }
   const response = await api.get(`api/v1/menus?childId=${childId}`);
+  menusCache.set(cacheKey, response.data);
   return response.data;
 };
 
-export const getMenuDetailApi = async (menuId, childId) => {
+export const getMenuDetailApi = async (menuId, childId, forceRefresh = false) => {
+  const cacheKey = `menu_detail_${menuId}_${childId}`;
+  if (!forceRefresh && menusCache.has(cacheKey)) {
+    return menusCache.get(cacheKey);
+  }
   const response = await api.get(`api/v1/menus/${menuId}?childId=${childId}`);
+  menusCache.set(cacheKey, response.data);
   return response.data;
 };
 
@@ -236,8 +264,12 @@ export const checkoutApi = async (data) => {
 /* ==========================================================================
    LUNCH CARD APIs
    ========================================================================== */
-export const getLunchCardApi = async (intervalType = 1, twoColumns = true) => {
-  const response = await api.get(`api/v1/reports/lunch-card?intervalType=${intervalType}&twoColumns=${twoColumns}`);
+export const getLunchCardApi = async (intervalTypeOrParams = 1, twoColumns = true) => {
+  if (typeof intervalTypeOrParams === 'object' && intervalTypeOrParams !== null) {
+    const response = await api.get('api/v1/reports/lunch-card', { params: intervalTypeOrParams });
+    return response.data;
+  }
+  const response = await api.get(`api/v1/reports/lunch-card?intervalType=${intervalTypeOrParams}&twoColumns=${twoColumns}`);
   return response.data;
 };
 

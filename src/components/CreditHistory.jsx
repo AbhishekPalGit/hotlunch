@@ -4,15 +4,8 @@ const CreditHistory = () => {
   const [searchOrderID, setSearchOrderID] = useState('');
   const [searchType, setSearchType] = useState('');
 
-  // Mock Credit History Data (Screenshot 7)
-  const creditData = [
-    { id: '1', amount: 100.00, type: 'Credit', student: 'Jane Doe', dateTime: 'Aug 11, 2026 8:45 PM', balance: 0.00, notes: 'Funds added via Credit Card', status: 'FAILURE' },
-    { id: '2', amount: 45.00, type: 'Credit', student: 'Jane Doe', dateTime: 'Aug 11, 2026 8:45 PM', balance: 0.00, notes: 'Promotional credit adjustments', status: 'FAILURE' },
-    { id: '3', amount: 130.00, type: 'Debit', student: 'John Doe', dateTime: 'Aug 11, 2026 8:45 PM', balance: 0.00, notes: 'Weekly order checkout debit', status: 'PENDING' },
-    { id: '4', amount: 300.00, type: 'Credit', student: 'Jane Doe', dateTime: 'Aug 11, 2026 8:45 PM', balance: 0.00, notes: 'Funds added via bank check #401', status: 'SUCCESS' },
-    { id: '5', amount: 80.50, type: 'Debit', student: 'John Doe', dateTime: 'Aug 11, 2026 8:45 PM', balance: 0.00, notes: 'Lunch menu adjustments debit', status: '' },
-    { id: '6', amount: 78.00, type: 'Debit', student: 'Jane Doe', dateTime: 'Aug 11, 2026 8:45 PM', balance: 0.00, notes: 'Order checkout debit', status: '' }
-  ];
+  // Credit History Data
+  const creditData = [];
 
   const getStatusBadgeClass = (status) => {
     switch (status) {

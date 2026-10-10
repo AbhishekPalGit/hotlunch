@@ -1,7 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { getDashboardSummaryApi, getMenusApi, getMenusForChildApi, getMenuDetailApi } from '../../services/api';
+import { 
+  getDashboardSummaryApi, 
+  getMenusApi, 
+  getMenusForChildApi, 
+  getMenuDetailApi,
+  createOrderApi,
+  getCartApi,
+  getOrdersApi,
+  getOrderDetailsApi,
+  getOrderedDatesApi
+} from '../../services/api';
 import { ShimmerStats, ShimmerCards } from '../../components/Shimmer';
 import AddonModal, { DEFAULT_ADDONS } from '../../components/AddonModal';
 
@@ -15,7 +25,14 @@ function getWeekDates(offset = 0) {
   today.setHours(0, 0, 0, 0);
 
   const currentDayOfWeek = today.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-  const distToMonday = currentDayOfWeek === 0 ? -6 : 1 - currentDayOfWeek;
+  let distToMonday;
+  if (currentDayOfWeek === 6) {
+    distToMonday = 2; // Saturday -> next Monday
+  } else if (currentDayOfWeek === 0) {
+    distToMonday = 1; // Sunday -> tomorrow Monday
+  } else {
+    distToMonday = 1 - currentDayOfWeek;
+  }
 
   const monday = new Date(today);
   monday.setDate(today.getDate() + distToMonday + (offset * 7));
@@ -48,6 +65,101 @@ function getWeekDates(offset = 0) {
   return { weekDays, today, monday };
 }
 
+export function getWeekOffsetForDate(targetDate) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const currentDayOfWeek = today.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+  let distToMonday;
+  if (currentDayOfWeek === 6) {
+    distToMonday = 2; // Saturday -> next Monday
+  } else if (currentDayOfWeek === 0) {
+    distToMonday = 1; // Sunday -> tomorrow Monday
+  } else {
+    distToMonday = 1 - currentDayOfWeek;
+  }
+
+  const currentMonday = new Date(today);
+  currentMonday.setDate(today.getDate() + distToMonday);
+  currentMonday.setHours(0, 0, 0, 0);
+
+  const target = new Date(targetDate);
+  target.setHours(0, 0, 0, 0);
+  const targetDayOfWeek = target.getDay();
+  let targetDistToMonday;
+  if (targetDayOfWeek === 6) {
+    targetDistToMonday = 2;
+  } else if (targetDayOfWeek === 0) {
+    targetDistToMonday = 1;
+  } else {
+    targetDistToMonday = 1 - targetDayOfWeek;
+  }
+
+  const targetMonday = new Date(target);
+  targetMonday.setDate(target.getDate() + targetDistToMonday);
+  targetMonday.setHours(0, 0, 0, 0);
+
+  const diffMs = targetMonday.getTime() - currentMonday.getTime();
+  const diffWeeks = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
+  return diffWeeks;
+}
+
+export function getMonthGridDays(baseDateOrString) {
+  let date = new Date();
+  if (baseDateOrString) {
+    if (baseDateOrString instanceof Date && !isNaN(baseDateOrString)) {
+      date = baseDateOrString;
+    } else if (typeof baseDateOrString === 'string') {
+      const trimmed = baseDateOrString.trim();
+      const parsed = new Date(trimmed.includes('-') ? trimmed : `1 ${trimmed}`);
+      if (!isNaN(parsed.getTime())) {
+        date = parsed;
+      }
+    }
+  }
+
+  const year = date.getFullYear();
+  const month = date.getMonth();
+
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+
+  const firstDow = firstDay.getDay(); // 0 = Sun, 1 = Mon ...
+  let distToMon;
+  if (firstDow === 1) distToMon = 0;
+  else if (firstDow === 0) distToMon = 1;
+  else if (firstDow === 6) distToMon = 2;
+  else distToMon = 1 - firstDow;
+
+  const startMonday = new Date(year, month, 1 + distToMon);
+  startMonday.setHours(0, 0, 0, 0);
+
+  const grid = [];
+  const current = new Date(startMonday);
+  const daysOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  while (current <= lastDay || grid.length % 5 !== 0 || grid.length < 20) {
+    const dow = current.getDay();
+    if (dow >= 1 && dow <= 5) {
+      const isCurrentMonth = current.getMonth() === month;
+      const fullDateStr = current.toISOString().split('T')[0];
+      const dateObj = new Date(current);
+      grid.push({
+        day: current.getDate(),
+        dateObj,
+        fullDateStr,
+        dayName: daysOfWeekNames[dow],
+        isCurrentMonth
+      });
+    }
+
+    current.setDate(current.getDate() + 1);
+    if (grid.length >= 35) break;
+  }
+
+  return grid;
+}
+
 function parseApiMenuData(rawData, visibleDays = []) {
   const result = {};
 
@@ -66,66 +178,71 @@ function parseApiMenuData(rawData, visibleDays = []) {
     });
   }
 
-  if (!rawData) return result;
-
   let itemList = [];
-  if (Array.isArray(rawData)) {
-    itemList = rawData;
-  } else if (rawData.config && Array.isArray(rawData.config)) {
-    rawData.config.forEach(block => {
-      if (Array.isArray(block.itemsArray)) itemList.push(...block.itemsArray);
-      if (Array.isArray(block.items)) itemList.push(...block.items);
-    });
-  } else if (rawData.items && Array.isArray(rawData.items)) {
-    itemList = rawData.items;
-  } else if (rawData.menus && Array.isArray(rawData.menus)) {
-    itemList = rawData.menus;
+  if (rawData) {
+    if (Array.isArray(rawData)) {
+      itemList = rawData;
+    } else if (rawData.config && Array.isArray(rawData.config)) {
+      rawData.config.forEach(block => {
+        const blockItems = Array.isArray(block.itemsArray) ? block.itemsArray : (Array.isArray(block.items) ? block.items : []);
+        blockItems.forEach(it => {
+          itemList.push({
+            ...it,
+            startDate: block.startDate,
+            endDate: block.endDate,
+            mcid: block.id || it.mcid
+          });
+        });
+      });
+    } else if (rawData.items && Array.isArray(rawData.items)) {
+      itemList = rawData.items;
+    } else if (rawData.menus && Array.isArray(rawData.menus)) {
+      itemList = rawData.menus;
+    }
   }
 
-  itemList.forEach((item, index) => {
-    let dayName = DAYS_OF_WEEK[index % 5];
-    if (item.day) {
-      const match = DAYS_OF_WEEK.find(d => d.toLowerCase() === String(item.day).toLowerCase());
-      if (match) dayName = match;
-    } else if (item.date) {
-      const dateObj = new Date(item.date);
-      if (!isNaN(dateObj.getTime())) {
-        const dIdx = dateObj.getDay() - 1;
-        if (dIdx >= 0 && dIdx < 5) dayName = DAYS_OF_WEEK[dIdx];
+  if (itemList.length > 0) {
+    itemList.forEach((item, index) => {
+      let dayName = DAYS_OF_WEEK[index % 5];
+      const itemDateStr = item.date || item.startDate || item.orderDate;
+      if (item.day) {
+        const match = DAYS_OF_WEEK.find(d => d.toLowerCase() === String(item.day).toLowerCase());
+        if (match) dayName = match;
+      } else if (itemDateStr) {
+        const dateObj = new Date(itemDateStr);
+        if (!isNaN(dateObj.getTime())) {
+          const dIdx = dateObj.getDay();
+          if (dIdx >= 1 && dIdx <= 5) {
+            dayName = DAYS_OF_WEEK[dIdx - 1];
+          }
+        }
       }
-    }
 
-    const formattedItem = {
-      id: item.id || item.itemId || `item_${index}`,
-      name: item.name || item.title || item.itemName || 'Meal Option',
-      size: item.size || item.portion || 'REGULAR',
-      price: parseFloat(item.price || item.amount || 0),
-      image: item.image || item.photoUrl || item.imageUrl || 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=120&q=80',
-      isVegetarian: !!(item.veg || item.isVegetarian || item.is_vegetarian),
-      isVegan: !!(item.vegan || item.isVegan || item.is_vegan),
-      isGlutenFree: !!(item.glutenFree || item.isGlutenFree || item.is_gluten_free),
-      isAllergen: !!(item.allergens?.length || item.is_allergen || item.isAllergen),
-      addonsCount: Array.isArray(item.addon) ? item.addon.length : (item.addonsCount !== undefined ? item.addonsCount : (item.name?.toLowerCase().includes('wings') ? 3 : 0)),
-      addons: Array.isArray(item.addon) ? item.addon : (Array.isArray(item.addons) ? item.addons : undefined)
-    };
+      const formattedItem = {
+        id: item.id || item.itemId || (51 + index),
+        mcid: item.mcid,
+        name: item.name || item.title || item.itemName || 'Meal Option',
+        size: item.size || item.portion || 'REGULAR',
+        price: parseFloat(item.price || item.amount || 0),
+        image: item.image || item.photoUrl || item.imageUrl || `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=120&q=80`,
+        isVegetarian: !!(item.veg || item.isVegetarian || item.is_vegetarian),
+        isVegan: !!(item.vegan || item.isVegan || item.is_vegan),
+        isGlutenFree: !!(item.glutenFree || item.isGlutenFree || item.is_gluten_free),
+        isAllergen: !!(item.allergens?.length || item.is_allergen || item.isAllerege || item.isAllergen),
+        addonsCount: Array.isArray(item.addon) ? item.addon.length : (item.addonsCount !== undefined ? item.addonsCount : 0),
+        addons: Array.isArray(item.addon) ? item.addon : (Array.isArray(item.addons) ? item.addons : undefined)
+      };
 
-    if (result[dayName]) {
-      result[dayName].items.push(formattedItem);
-    }
-  });
+      if (result[dayName]) {
+        result[dayName].items.push(formattedItem);
+      }
+    });
+  }
 
   return result;
 }
 
-const MONTH_GRID_DAYS = [
-  { day: 29 }, { day: 30 },
-  { day: 1 }, { day: 2 }, { day: 3 },
-  { day: 6 }, { day: 7 }, { day: 8 },
-  { day: 9 }, { day: 10 },
-  { day: 13 }, { day: 14 }, { day: 15 }, { day: 16 }, { day: 17 }
-];
-
-const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
+const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart, refreshCart }) => {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -136,23 +253,158 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
   const [menuViewType, setMenuViewType] = useState('Week'); // 'Week' | 'Month'
   const [weekOffset, setWeekOffset] = useState(0); // 0 = current week, 1 = next week
   const [selectedMonth, setSelectedMonth] = useState('August 2026');
-  const [copyFromStudent, setCopyFromStudent] = useState('');
+  const [selectedMenuIdMap, setSelectedMenuIdMap] = useState({});
+  const [copyFromStudentMap, setCopyFromStudentMap] = useState({});
   const [apiMenus, setApiMenus] = useState({});
+  const [childMenusMap, setChildMenusMap] = useState({});
   const [loadingMenu, setLoadingMenu] = useState(false);
+  const [addingToCartChildId, setAddingToCartChildId] = useState(null);
+  const [childNotes, setChildNotes] = useState({});
 
-  // Fetch API menus for active child
-  const fetchMenuForChild = async (childId) => {
-    if (childId === null || childId === undefined) return;
+  // Placed Orders & Ordered Dates History state
+  const [placedOrdersMap, setPlacedOrdersMap] = useState({});
+  const [orderedDatesHistoryMap, setOrderedDatesHistoryMap] = useState({});
+
+  // Fetch placed orders history from backend API
+  const fetchPlacedOrders = async () => {
+    try {
+      const res = await getOrdersApi();
+      if (res && res.status === 'success' && Array.isArray(res.data)) {
+        const ordersData = res.data;
+        const detailsPromises = ordersData.slice(0, 10).map(async (o) => {
+          const rawId = o.id || o.orderId;
+          if (!rawId) return null;
+          try {
+            const detailRes = await getOrderDetailsApi(rawId);
+            return {
+              order: o,
+              detail: detailRes?.data || detailRes
+            };
+          } catch (e) {
+            return { order: o, detail: null };
+          }
+        });
+
+        const settled = await Promise.allSettled(detailsPromises);
+        const mapByChild = {};
+
+        settled.forEach(item => {
+          if (item.status === 'fulfilled' && item.value) {
+            const { order, detail } = item.value;
+            const childKey = String(order.childId || order.typeId || order.student || order.studentName || 'all').toLowerCase();
+            if (!mapByChild[childKey]) mapByChild[childKey] = {};
+
+            const orderInfo = detail?.orderInfo || order.orderInfo || order.itemsByDate || {};
+            if (orderInfo && typeof orderInfo === 'object') {
+              Object.keys(orderInfo).forEach(dateKey => {
+                const dateItems = Array.isArray(orderInfo[dateKey]) ? orderInfo[dateKey] : [];
+                if (dateItems.length > 0) {
+                  const items = dateItems.map(it => ({
+                    name: it.name || it.itemName || 'Meal',
+                    quantity: parseInt(it.quantity, 10) || 1,
+                    price: parseFloat(it.unitPrice || it.price || 0)
+                  }));
+                  const totalProducts = items.reduce((sum, it) => sum + it.quantity, 0);
+                  const totalPrice = items.reduce((sum, it) => sum + (it.price * it.quantity), 0);
+                  mapByChild[childKey][dateKey] = {
+                    totalProducts,
+                    totalPrice: totalPrice || parseFloat(order.amount || 0),
+                    items,
+                    orderId: order.orderId || order.id,
+                    status: order.status || 'PAID'
+                  };
+                }
+              });
+            }
+          }
+        });
+
+        setPlacedOrdersMap(mapByChild);
+      }
+    } catch (err) {
+      console.log('Placed orders fetch notice in Dashboard:', err);
+    }
+  };
+
+  const fetchOrderedDatesHistory = async (childId, menuId) => {
+    if (!childId || !menuId) return;
+    try {
+      const res = await getOrderedDatesApi(childId, menuId);
+      if (res && (res.orderedDates || res.data?.orderedDates)) {
+        const dates = res.orderedDates || res.data?.orderedDates || [];
+        setOrderedDatesHistoryMap(prev => ({
+          ...prev,
+          [childId]: dates
+        }));
+      }
+    } catch (err) {
+      console.log('Ordered dates history notice in Dashboard:', err);
+    }
+  };
+
+  // Handle switching menu from dropdown
+  const handleMenuChange = async (childId, newMenuId) => {
+    const numId = parseInt(newMenuId, 10);
+    if (!numId) return;
+
+    setSelectedMenuIdMap(prev => ({ ...prev, [childId]: numId }));
+
+    const childMenus = childMenusMap[childId] || [];
+    const targetMenu = childMenus.find(m => parseInt(m.id, 10) === numId);
+    if (targetMenu) {
+      const label = targetMenu.title || targetMenu.name || targetMenu.month || `Menu ${numId}`;
+      setSelectedMonth(label);
+    }
+
     setLoadingMenu(true);
     try {
-      const res = await getMenusForChildApi(childId);
+      fetchOrderedDatesHistory(childId, numId);
+      const detailRes = await getMenuDetailApi(numId, childId);
+      if (detailRes && (detailRes.data || detailRes.config)) {
+        const menuData = detailRes.data || detailRes;
+        setApiMenus(prev => ({ ...prev, [childId]: menuData }));
+        setMenuQuantities(prev => ({
+          ...prev,
+          [childId]: {}
+        }));
+        toast.info(`Switched to: ${targetMenu?.title || targetMenu?.name || 'Selected Menu'}`);
+      }
+    } catch (err) {
+      console.error('Failed to load menu detail on menu switch:', err);
+      toast.error('Could not load menu items for the selected menu.');
+    } finally {
+      setLoadingMenu(false);
+    }
+  };
+
+  // Fetch API menus for active child (cached so it only fetches once per child)
+  const fetchMenuForChild = async (childId, force = false) => {
+    if (childId === null || childId === undefined) return;
+    if (!force && childMenusMap[childId] && apiMenus[childId]) {
+      return;
+    }
+    setLoadingMenu(true);
+    try {
+      const res = await getMenusForChildApi(childId, force);
       if (res && res.status === 'success' && res.data) {
         const rawList = Array.isArray(res.data) ? res.data : (res.data.menus || []);
+        setChildMenusMap(prev => ({ ...prev, [childId]: rawList }));
         if (rawList.length > 0 && rawList[0].id) {
+          const firstMenuId = parseInt(rawList[0].id, 10);
+          setSelectedMenuIdMap(prev => ({
+            ...prev,
+            [childId]: prev[childId] || firstMenuId
+          }));
+          const targetMenuId = selectedMenuIdMap[childId] || firstMenuId;
+          const activeMenuObj = rawList.find(m => parseInt(m.id, 10) === targetMenuId) || rawList[0];
+          setSelectedMonth(activeMenuObj.title || activeMenuObj.name || activeMenuObj.month || `Menu ${targetMenuId}`);
+
+          fetchOrderedDatesHistory(childId, targetMenuId);
+
           try {
-            const detailRes = await getMenuDetailApi(rawList[0].id, childId);
-            if (detailRes && detailRes.data) {
-              setApiMenus(prev => ({ ...prev, [childId]: detailRes.data }));
+            const detailRes = await getMenuDetailApi(targetMenuId, childId, force);
+            if (detailRes && (detailRes.data || detailRes.config)) {
+              setApiMenus(prev => ({ ...prev, [childId]: detailRes.data || detailRes }));
             }
           } catch (dErr) {
             setApiMenus(prev => ({ ...prev, [childId]: rawList }));
@@ -169,21 +421,13 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
   };
 
   useEffect(() => {
-    if (expandedChildId !== null) {
+    if (expandedChildId !== null && (!childMenusMap[expandedChildId] || !apiMenus[expandedChildId])) {
       fetchMenuForChild(expandedChildId);
     }
-  }, [expandedChildId]);
+  }, [expandedChildId, childMenusMap, apiMenus]);
 
   // Quantities state: childId -> day -> itemId -> qty
-  const [menuQuantities, setMenuQuantities] = useState({
-    default: {
-      Monday: { m2: 2 },
-      Tuesday: { t2: 1 },
-      Wednesday: { w2: 1 },
-      Thursday: { th2: 1 },
-      Friday: { f2: 1 }
-    }
-  });
+  const [menuQuantities, setMenuQuantities] = useState({});
 
   // Addon Modal State
   const [addonModal, setAddonModal] = useState({
@@ -252,6 +496,7 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
 
   useEffect(() => {
     fetchDashboard();
+    fetchPlacedOrders();
   }, []);
 
   const parent = summary?.parent || {};
@@ -263,8 +508,8 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
   const updateQty = (childId, day, itemId, delta) => {
     const cid = childId ?? 'default';
     setMenuQuantities(prev => {
-      const childData = prev[cid] || {};
-      const dayData = childData[day] || {};
+      const childData = prev[cid] ? { ...prev[cid] } : {};
+      const dayData = childData[day] ? { ...childData[day] } : {};
       const currentQty = dayData[itemId] || 0;
       const nextQty = Math.max(0, currentQty + delta);
       return {
@@ -280,11 +525,144 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
     });
   };
 
+  const handleOpenWeekForDay = (targetDate) => {
+    if (!targetDate) return;
+    const targetOffset = getWeekOffsetForDate(targetDate);
+    setWeekOffset(targetOffset);
+    setMenuViewType('Week');
+  };
+
+  const handleEditDayOrder = (dateObj, dayName, fullDateStr) => {
+    if (!dateObj) return;
+    const targetOffset = getWeekOffsetForDate(dateObj);
+    setWeekOffset(targetOffset);
+    setMenuViewType('Week');
+    toast.info(`Editing meals for ${dayName || 'selected day'}, ${fullDateStr || ''}`);
+  };
+
+  const getOrderForCell = (child, childId, cell) => {
+    const studentName = (child?.name || `${child?.firstName || ''} ${child?.lastName || ''}`.trim() || child?.fullName || '').toLowerCase();
+    const cellDateStr = cell.fullDateStr;
+    const cellDay = cell.day;
+    const cellMonth = cell.dateObj.getMonth();
+    const cellYear = cell.dateObj.getFullYear();
+
+    const dateMatchesCell = (d) => {
+      if (!d) return false;
+      if (d === cellDateStr) return true;
+      const parsed = new Date(d);
+      if (!isNaN(parsed.getTime())) {
+        if (parsed.getFullYear() === cellYear && parsed.getMonth() === cellMonth && parsed.getDate() === cellDay) {
+          return true;
+        }
+      }
+      const formattedCheck = `${String(cellDay).padStart(2, '0')} ${cell.dateObj.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}`;
+      if (String(d).toUpperCase().includes(formattedCheck)) return true;
+      return false;
+    };
+
+    // 1. Placed orders from backend API
+    const childOrders = placedOrdersMap[String(childId).toLowerCase()] || placedOrdersMap[studentName] || {};
+    for (const [dateKey, orderData] of Object.entries(childOrders)) {
+      if (dateMatchesCell(dateKey)) return orderData;
+    }
+
+    for (const [cKey, oMap] of Object.entries(placedOrdersMap)) {
+      if (!studentName || cKey.includes(studentName) || studentName.includes(cKey)) {
+        for (const [dKey, oData] of Object.entries(oMap)) {
+          if (dateMatchesCell(dKey)) return oData;
+        }
+      }
+    }
+
+    // 2. Active cartItems (from App / getCartApi)
+    if (Array.isArray(cartItems) && cartItems.length > 0) {
+      const matchingCartItems = cartItems.filter(it => {
+        const itStudent = (it.student || it.studentName || it.childName || '').toLowerCase();
+        const matchesStudent = !studentName || !itStudent || itStudent.includes(studentName) || studentName.includes(itStudent);
+        if (!matchesStudent) return false;
+        const itDate = it.date || it.orderDate || '';
+        return dateMatchesCell(itDate);
+      });
+
+      if (matchingCartItems.length > 0) {
+        const consolidated = {};
+        matchingCartItems.forEach(it => {
+          const name = it.item || it.name || it.itemName || 'Meal';
+          const qty = parseInt(it.quantity, 10) || 1;
+          const price = parseFloat(it.price || 0);
+          if (!consolidated[name]) {
+            consolidated[name] = { name, quantity: 0, price };
+          }
+          consolidated[name].quantity += qty;
+        });
+        const items = Object.values(consolidated);
+        const totalProducts = items.reduce((sum, it) => sum + it.quantity, 0);
+        const totalPrice = items.reduce((sum, it) => sum + (it.price * it.quantity), 0);
+        return {
+          totalProducts,
+          totalPrice,
+          items,
+          isCart: true
+        };
+      }
+    }
+
+    // 3. Current session's menuQuantities
+    const cid = childId ?? 'default';
+    const childSelections = menuQuantities[cid] || menuQuantities['default'] || {};
+    const cellWeekOffset = getWeekOffsetForDate(cell.dateObj);
+    if (cellWeekOffset === weekOffset && childSelections[cell.dayName]) {
+      const daySelections = childSelections[cell.dayName];
+      const { weekDays } = getWeekDates(weekOffset);
+      const activeMenu = parseApiMenuData(apiMenus[childId], weekDays);
+      const dayMenu = activeMenu[cell.dayName];
+      const selectedItems = [];
+
+      Object.keys(daySelections).forEach(itemId => {
+        const qty = daySelections[itemId] || 0;
+        if (qty > 0) {
+          const found = dayMenu?.items?.find(i => String(i.id) === String(itemId));
+          selectedItems.push({
+            name: found?.name || `Meal Option`,
+            quantity: qty,
+            price: found?.price || 0
+          });
+        }
+      });
+
+      if (selectedItems.length > 0) {
+        const totalProducts = selectedItems.reduce((sum, it) => sum + it.quantity, 0);
+        const totalPrice = selectedItems.reduce((sum, it) => sum + (it.price * it.quantity), 0);
+        return {
+          totalProducts,
+          totalPrice,
+          items: selectedItems,
+          isSession: true
+        };
+      }
+    }
+
+    // 4. Ordered dates history from API
+    const historyList = orderedDatesHistoryMap[childId] || [];
+    if (historyList.some(d => dateMatchesCell(d))) {
+      return {
+        totalProducts: 1,
+        totalPrice: 0,
+        items: [{ name: 'Meal Order', quantity: 1, price: 0 }],
+        isHistory: true
+      };
+    }
+
+    return null;
+  };
+
   const handleFirstItemAllDays = (childId) => {
     const cid = childId ?? 'default';
-    const activeMenu = parseApiMenuData(apiMenus[childId]);
+    const { weekDays } = getWeekDates(weekOffset);
+    const activeMenu = parseApiMenuData(apiMenus[childId], weekDays);
     setMenuQuantities(prev => {
-      const childData = { ...(prev[cid] || {}) };
+      const childData = prev[cid] ? { ...prev[cid] } : {};
       Object.keys(activeMenu).forEach(day => {
         const firstItem = activeMenu[day]?.items[0];
         if (firstItem) {
@@ -301,51 +679,185 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
 
   const handleCopyOrder = (targetChildId, sourceStudentName) => {
     if (!sourceStudentName) return;
+    const targetCid = targetChildId ?? 'default';
+
+    // Find source child by name
+    const sourceChild = children.find((c, idx) => {
+      const sName = c.name || `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.trim() || `Student ${idx + 1}`;
+      return sName.toLowerCase() === sourceStudentName.toLowerCase() || String(c.id) === String(sourceStudentName);
+    });
+
+    if (sourceChild) {
+      const sourceCid = sourceChild.id ?? 'default';
+      const sourceQty = menuQuantities[sourceCid];
+      if (sourceQty && Object.keys(sourceQty).length > 0) {
+        setMenuQuantities(prev => ({
+          ...prev,
+          [targetCid]: JSON.parse(JSON.stringify(sourceQty))
+        }));
+        // Also copy addons if any
+        setSelectedAddonsMap(prev => {
+          const updated = { ...prev };
+          Object.keys(prev).forEach(key => {
+            if (key.startsWith(`${sourceCid}_`)) {
+              const suffix = key.replace(`${sourceCid}_`, '');
+              updated[`${targetCid}_${suffix}`] = JSON.parse(JSON.stringify(prev[key]));
+            }
+          });
+          return updated;
+        });
+      }
+    }
     toast.success(`Copied menu selections from ${sourceStudentName}`);
   };
 
-  const handleFinishOrder = (child) => {
+  const handleOpenNotes = (child) => {
     const cid = child?.id ?? 'default';
-    const childSelections = menuQuantities[cid] || {};
+    const currentNote = childNotes[cid] || '';
+    const note = window.prompt(`Special instructions or dietary notes for ${child?.name || 'this student'} (e.g. "No onions please"):`, currentNote);
+    if (note !== null) {
+      setChildNotes(prev => ({ ...prev, [cid]: note.trim() }));
+      if (note.trim()) {
+        toast.info(`Note saved for ${child?.name || 'student'}`);
+      }
+    }
+  };
+
+  const handleFinishOrder = async (child) => {
+    const cid = child?.id ?? 'default';
+    const childSelections = menuQuantities[cid] || menuQuantities['default'] || {};
     let totalItems = 0;
 
-    const activeMenu = parseApiMenuData(apiMenus[child?.id]);
-
     Object.keys(childSelections).forEach(day => {
-      Object.keys(childSelections[day]).forEach(itemId => {
-        const qty = childSelections[day][itemId];
-        if (qty > 0 && addToCart) {
-          totalItems += qty;
-          // Find item details
-          let itemDetails = null;
-          Object.values(activeMenu).forEach(d => {
-            const found = d.items?.find(i => i.id === itemId);
-            if (found) itemDetails = found;
-          });
-          if (itemDetails) {
-            const addonKey = `${cid}_${day}_${itemId}`;
-            const addonSelections = selectedAddonsMap[addonKey] || {};
-            const flatAddonIds = Object.values(addonSelections).flat();
-            const addonsList = flatAddonIds.map(aid => {
-              const def = DEFAULT_ADDONS.find(a => a.id === aid);
-              return def ? def.name : aid;
-            });
-
-            addToCart({
-              studentName: child?.name || child?.first_name || 'Student',
-              itemName: itemDetails.name,
-              price: itemDetails.price,
-              quantity: qty,
-              day,
-              addons: addonsList
-            });
-          }
-        }
+      Object.keys(childSelections[day] || {}).forEach(itemId => {
+        totalItems += (childSelections[day][itemId] || 0);
       });
     });
 
-    toast.success(`Order summary updated for ${child?.name || child?.first_name || 'child'}!`);
-    navigate('/shoppingcart');
+    const studentDisplayName = child?.fullName || `${child?.firstName || ''} ${child?.lastName || ''}`.trim() || child?.name || child?.first_name || 'Student';
+
+    if (totalItems === 0) {
+      toast.warn(`Please select at least one meal item for ${studentDisplayName} before adding to cart.`);
+      return;
+    }
+
+    const { weekDays } = getWeekDates(weekOffset);
+    const activeMenu = parseApiMenuData(apiMenus[child?.id], weekDays);
+
+    // Classroom ID key for config
+    const classroomKey = String(child?.classroomId || child?.classroom || child?.classInfo?.id || child?.campusId || '101');
+    const config = { [classroomKey]: {} };
+    const itemsToSync = [];
+
+    Object.keys(childSelections).forEach(day => {
+      const dayData = activeMenu[day];
+      let dateStr = dayData?.fullDateStr;
+      if (!dateStr) {
+        const matchedWeekDay = weekDays.find(w => w.dayName.toLowerCase() === day.toLowerCase());
+        dateStr = matchedWeekDay?.fullDateStr || new Date().toISOString().split('T')[0];
+      }
+
+      const dayItems = [];
+
+      Object.keys(childSelections[day] || {}).forEach(itemId => {
+        const qty = parseInt(childSelections[day][itemId], 10) || 0;
+        if (qty > 0) {
+          const addonKey = `${cid}_${day}_${itemId}`;
+          const addonSelections = selectedAddonsMap[addonKey] || {};
+          const flatAddonIds = Object.values(addonSelections).flat();
+          const addonList = flatAddonIds.map(aid => ({
+            id: parseInt(aid, 10) || 88,
+            quantity: 1
+          }));
+
+          let itemDetails = null;
+          Object.values(activeMenu).forEach(d => {
+            const found = d.items?.find(i => String(i.id) === String(itemId));
+            if (found) itemDetails = found;
+          });
+
+          const numericItemId = !isNaN(parseInt(itemId, 10))
+            ? parseInt(itemId, 10)
+            : (parseInt(String(itemId).replace(/\D/g, ''), 10) || 55);
+
+          dayItems.push({
+            id: numericItemId,
+            quantity: qty,
+            addon: addonList
+          });
+
+          const addonNames = flatAddonIds.map(aid => {
+            const def = DEFAULT_ADDONS.find(a => String(a.id) === String(aid));
+            return def ? def.name : aid;
+          });
+
+          itemsToSync.push({
+            id: numericItemId,
+            student: studentDisplayName,
+            studentName: studentDisplayName,
+            childName: studentDisplayName,
+            itemName: itemDetails?.name || 'Lunch Meal',
+            price: parseFloat(itemDetails?.price || 0),
+            quantity: qty,
+            day,
+            date: dateStr,
+            addons: addonNames
+          });
+        }
+      });
+
+      if (dayItems.length > 0) {
+        config[classroomKey][dateStr] = dayItems;
+      }
+    });
+
+    const childMenus = childMenusMap[child?.id] || [];
+    const currentMenuId = selectedMenuIdMap[child?.id]
+      || childMenus.find(m => (m.title || m.name || m.month) === selectedMonth)?.id
+      || childMenus[0]?.id
+      || 1;
+    const menuId = parseInt(currentMenuId, 10) || 1;
+    const childId = parseInt(child?.id, 10) || 940;
+
+    const orderPayload = {
+      typeId: childId,
+      childId,
+      type: 5,
+      menuId,
+      isDraft: 1,
+      notes: childNotes[cid] || '',
+      config
+    };
+
+    setAddingToCartChildId(cid);
+
+    try {
+      const res = await createOrderApi(orderPayload);
+      // Check for orders API response; only then save to cart in local state
+      if (res && (res.status === 'success' || res.orderId || res.succ_code)) {
+        if (addToCart && itemsToSync.length > 0) {
+          itemsToSync.forEach(it => addToCart(it));
+        }
+        if (refreshCart) {
+          await refreshCart();
+        }
+        fetchPlacedOrders();
+        toast.success(`Added ${totalItems} meal${totalItems > 1 ? 's' : ''} to cart for ${studentDisplayName}!`);
+      } else {
+        const errorMsg = res?.message || 'Could not add order to cart.';
+        toast.error(errorMsg);
+      }
+    } catch (err) {
+      console.error('Order API error:', err);
+      const errMsg = err.response?.data?.message
+        || err.response?.data?.detail?.message
+        || (Array.isArray(err.response?.data?.detail) ? err.response?.data?.detail.map(d => d.msg).join(', ') : null)
+        || err.message
+        || 'Failed to add meals to cart.';
+      toast.error(errMsg);
+    } finally {
+      setAddingToCartChildId(null);
+    }
   };
 
   const handleNextChild = (currentIndex) => {
@@ -421,12 +933,12 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
             {children.map((child, i) => {
               const childId = child.id ?? i;
               const isExpanded = expandedChildId === childId;
-              const fullName = child.name || `${child.firstName || ''} ${child.lastName || ''}`.trim() || 'Jane Doe';
-              const initials = fullName.split(' ').map(n => n[0] || '').join('').toUpperCase().slice(0, 2);
-              const campus = child.campusName || child.campusInfo?.name || 'Valleyview Middle New';
-              const grade = child.gradeName || child.gradeInfo?.name || '6';
-              const room = child.className || child.classInfo?.name || '1';
-              const balance = child.balance || child.owed || (45.60 - i * 20).toFixed(2);
+              const fullName = child.name || `${child.firstName || ''} ${child.lastName || ''}`.trim() || `Child #${childId}`;
+              const initials = fullName.split(' ').map(n => n[0] || '').join('').toUpperCase().slice(0, 2) || 'ST';
+              const campus = child.campusName || child.campusInfo?.name || '--';
+              const grade = child.gradeName || child.gradeInfo?.name || '--';
+              const room = child.className || child.classInfo?.name || '--';
+              const balance = child.balance ?? child.owed ?? '0.00';
               const cidKey = childId ?? 'default';
               const childQuantities = menuQuantities[cidKey] || {};
 
@@ -481,12 +993,26 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                             />
                             <select
                               className="accordion-input-pill"
-                              value={selectedMonth}
-                              onChange={(e) => setSelectedMonth(e.target.value)}
-                              style={{ width: 115, display: 'block', cursor: 'pointer' }}
+                              value={selectedMenuIdMap[childId] || childMenusMap[childId]?.[0]?.id || ''}
+                              onChange={(e) => handleMenuChange(childId, e.target.value)}
+                              style={{ width: 140, display: 'block', cursor: 'pointer' }}
+                              disabled={loadingMenu}
                             >
-                              <option value="August 2026">August 2026</option>
-                              <option value="September 2026">September 2026</option>
+                              {childMenusMap[childId]?.length > 0 ? (
+                                childMenusMap[childId].map((m, idx) => {
+                                  const label = m.title || m.name || m.month || `Menu ${m.id || idx + 1}`;
+                                  return (
+                                    <option key={m.id || idx} value={m.id}>
+                                      {label}
+                                    </option>
+                                  );
+                                })
+                              ) : (
+                                <>
+                                  <option value="1">August 2026</option>
+                                  <option value="2">September 2026</option>
+                                </>
+                              )}
                             </select>
                           </div>
                           <div className="accordion-meta-block">
@@ -518,17 +1044,21 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                             <span>Copy order from</span>
                             <select
                               className="accordion-input-pill"
-                              value={copyFromStudent}
+                              value={copyFromStudentMap[childId] || ''}
                               onChange={(e) => {
-                                setCopyFromStudent(e.target.value);
-                                handleCopyOrder(childId, e.target.value);
+                                const val = e.target.value;
+                                setCopyFromStudentMap(prev => ({ ...prev, [childId]: val }));
+                                handleCopyOrder(childId, val);
                               }}
-                              style={{ width: 110, cursor: 'pointer' }}
+                              style={{ width: 125, cursor: 'pointer' }}
                             >
                               <option value="">Select student</option>
-                              {children.filter(c => (c.id ?? i) !== childId).map(c => (
-                                <option key={c.id || c.name} value={c.name}>{c.name || 'John Doe'}</option>
-                              ))}
+                              {children.map((c, idx) => {
+                                const sName = c.name || `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.trim() || `Student ${idx + 1}`;
+                                return (
+                                  <option key={c.id || idx} value={sName}>{sName}</option>
+                                );
+                              })}
                             </select>
                           </div>
 
@@ -709,53 +1239,123 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                           </div>
                         );
                       })() : (
-                        /* ── View 2: Month View Calendar Grid ── */
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                          <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'flex-end',
-                            width: '100%',
-                            padding: '0 4px',
-                            marginBottom: 2
-                          }}>
-                            <button
-                              className="btn-first-item-all"
-                              onClick={() => handleFirstItemAllDays(childId)}
-                              title="First order for all days"
-                            >
-                              FIRST ITEM FOR ALL DAYS
-                            </button>
-                          </div>
+                        (() => {
+                          const childMenus = childMenusMap[childId] || [];
+                          const activeChildMenu = childMenus.find(m => parseInt(m.id, 10) === selectedMenuIdMap[childId]) || childMenus[0];
+                          const baseMonthDate = activeChildMenu?.startDate || selectedMonth || new Date();
+                          const monthGridDays = getMonthGridDays(baseMonthDate);
 
-                          <div className="month-calendar-grid">
-                            {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map(dName => (
-                              <div className="month-day-header" key={dName}>{dName}</div>
-                            ))}
-
-                            {MONTH_GRID_DAYS.map((cell, idx) => (
-                              <div className="month-day-cell" key={idx}>
-                                <span className="month-day-number">{cell.day}</span>
-                                {cell.count && (
-                                  <div className="month-order-card">
-                                    <div className="month-order-card-header">
-                                      <span className="month-order-card-title">{cell.count} products - {cell.price}$</span>
-                                      <button className="month-order-card-edit-btn" onClick={() => setMenuViewType('Week')}>
-                                        <i className="lni lni-pencil" />
-                                      </button>
-                                    </div>
-                                    <div className="month-order-item-list">
-                                      <div>1x Veggie Burger</div>
-                                      <div>1x Roast Beef Sandwich</div>
-                                      <div>1x Apple Juice</div>
-                                      <div>2x Apple Pie</div>
-                                    </div>
-                                  </div>
-                                )}
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                width: '100%',
+                                padding: '0 4px',
+                                marginBottom: 2
+                              }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
+                                  <i className="lni lni-calendar" style={{ marginRight: 6, color: '#006D77' }} />
+                                  Click any day's cart icon to open that week
+                                </div>
+                                <button
+                                  className="btn-first-item-all"
+                                  onClick={() => handleFirstItemAllDays(childId)}
+                                  title="First order for all days"
+                                >
+                                  FIRST ITEM FOR ALL DAYS
+                                </button>
                               </div>
-                            ))}
-                          </div>
-                        </div>
+
+                              <div className="month-calendar-grid">
+                                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map(dName => (
+                                  <div className="month-day-header" key={dName}>{dName}</div>
+                                ))}
+
+                                {monthGridDays.map((cell, idx) => {
+                                  const orderInfo = getOrderForCell(child, childId, cell);
+                                  const dayQty = orderInfo ? orderInfo.totalProducts : Object.values(childQuantities[cell.dayName] || {}).reduce((sum, q) => sum + (q || 0), 0);
+
+                                  return (
+                                    <div 
+                                      className={`month-day-cell ${cell.isCurrentMonth ? '' : 'other-month'} ${orderInfo ? 'has-order' : ''}`} 
+                                      key={idx}
+                                      onClick={() => handleOpenWeekForDay(cell.dateObj)}
+                                      title={orderInfo ? `Click to edit order for ${cell.dayName}, ${cell.fullDateStr}` : `Click to open week containing ${cell.dayName}, ${cell.fullDateStr}`}
+                                    >
+                                      <div className={`month-day-cell-top ${orderInfo ? 'has-order' : ''}`}>
+                                        <span className="month-day-number">{cell.day}</span>
+                                        {!orderInfo && (
+                                          <button
+                                            type="button"
+                                            className="month-day-cart-btn"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleOpenWeekForDay(cell.dateObj);
+                                            }}
+                                            title={`Open week for ${cell.dayName}, ${cell.fullDateStr}`}
+                                          >
+                                            <i className="lni lni-cart" />
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {orderInfo ? (
+                                        <div 
+                                          className="month-order-card"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleEditDayOrder(cell.dateObj, cell.dayName, cell.fullDateStr);
+                                          }}
+                                          title={`Edit order for ${cell.dayName}, ${cell.fullDateStr}`}
+                                        >
+                                          <div className="month-order-card-header">
+                                            <span className="month-order-card-title">
+                                              {orderInfo.totalProducts} product{orderInfo.totalProducts !== 1 ? 's' : ''} – {Math.round(orderInfo.totalPrice)}$
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className="month-order-card-edit-btn"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleEditDayOrder(cell.dateObj, cell.dayName, cell.fullDateStr);
+                                              }}
+                                              title={`Edit order for ${cell.dayName}, ${cell.fullDateStr}`}
+                                            >
+                                              <i className="lni lni-pencil" />
+                                            </button>
+                                          </div>
+
+                                          <div className="month-order-item-list">
+                                            {orderInfo.items.map((it, i) => (
+                                              <div key={i} className="month-order-item-row">
+                                                <span className="month-order-item-qty">{it.quantity}x</span>
+                                                <span className="month-order-item-name">{it.name}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="month-day-cell-bottom">
+                                          {dayQty > 0 && (
+                                            <div className="month-day-selected-badge">
+                                              <i className="lni lni-checkmark" style={{ fontSize: 10 }} />
+                                              {dayQty} selected
+                                            </div>
+                                          )}
+                                          <span className="month-day-open-hint">
+                                            View week →
+                                          </span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()
                       )}
 
                       {/* Accordion Footer Bar */}
@@ -765,8 +1365,8 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                           <div className="dietary-legend-item"><span className="tag-dot v-green">V</span> Vegetarian</div>
                           <div className="dietary-legend-item"><span className="tag-dot g-gold">G</span> Gluten free</div>
                           <div className="dietary-legend-item"><span className="tag-dot a-red">A</span> Allergens</div>
-                          <button className="btn-add-notes" onClick={() => toast.info('Notes added!')}>
-                            ADD NOTES
+                          <button className="btn-add-notes" onClick={() => handleOpenNotes(child)}>
+                            {childNotes[child?.id ?? 'default'] ? 'EDIT NOTES ✎' : 'ADD NOTES'}
                           </button>
                         </div>
 
@@ -777,8 +1377,12 @@ const Dashboard = ({ setAvailableFunds, setAmountOwed, addToCart }) => {
                           <button className="btn-accordion-next" onClick={() => handleNextChild(i)}>
                             NEXT CHILD
                           </button>
-                          <button className="btn-accordion-finish" onClick={() => handleFinishOrder(child)}>
-                            FINISH ORDER
+                          <button 
+                            className="btn-accordion-finish" 
+                            onClick={() => handleFinishOrder(child)}
+                            disabled={addingToCartChildId === (child?.id ?? 'default')}
+                          >
+                            {addingToCartChildId === (child?.id ?? 'default') ? 'Adding to Cart...' : 'Add To Cart'}
                           </button>
                         </div>
                       </div>

@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
+import { createOrderApi } from '../services/api';
 
 const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveTab }) => {
   const [currentView, setCurrentView] = useState('students_list'); // 'students_list' or 'weekly_menu'
   const [selectedStudent, setSelectedStudent] = useState(null);
-  
+
   // Weekly Menu filters & state
   const [selectedCampus, setSelectedCampus] = useState('Valleyview Middle New');
   const [viewType, setViewType] = useState('Week'); // 'Week' or 'Month'
   const [copyFromStudent, setCopyFromStudent] = useState('');
   const [firstItemAllDays, setFirstItemAllDays] = useState(false);
   const [activeWeekStart, setActiveWeekStart] = useState(new Date("2026-08-12"));
-  
+
   // Menu selection quantities state (student_id -> day -> item_name -> qty)
   const [menuQuantities, setMenuQuantities] = useState({});
 
@@ -60,17 +61,21 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
     }));
   };
 
-  const handleFinishOrder = () => {
+  const handleFinishOrder = async () => {
     // Collect all items > 0 for this student
     const studentId = selectedStudent.id;
     const studentSelections = menuQuantities[studentId] || {};
     let addedAny = false;
 
+    const config = { '101': {} };
+    const dateStr = '2026-08-12';
+    const dayItems = [];
+    const itemsToSync = [];
+
     Object.keys(studentSelections).forEach(day => {
       Object.keys(studentSelections[day]).forEach(itemName => {
         const qty = studentSelections[day][itemName];
         if (qty > 0) {
-          // Find item price
           let itemDetails = null;
           Object.values(menuData).forEach(items => {
             const found = items.find(i => i.name === itemName);
@@ -78,8 +83,17 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
           });
 
           if (itemDetails) {
-            addToCart({
+            const numericId = parseInt(String(itemDetails.id || '55').replace(/\D/g, ''), 10) || 55;
+            dayItems.push({
+              id: numericId,
+              quantity: qty,
+              addon: []
+            });
+
+            itemsToSync.push({
+              student: selectedStudent.name,
               studentName: selectedStudent.name,
+              childName: selectedStudent.name,
               studentId: selectedStudent.studentId,
               itemName: itemDetails.name,
               price: itemDetails.price,
@@ -94,8 +108,35 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
     });
 
     if (addedAny) {
-      alert(`Order summary added to cart for ${selectedStudent.name}! Redirecting to Shopping Cart.`);
-      setActiveTab('cart');
+      config['101'][dateStr] = dayItems;
+      try {
+        const res = await createOrderApi({
+          typeId: parseInt(selectedStudent.id, 10) || 940,
+          childId: parseInt(selectedStudent.id, 10) || 940,
+          type: 5,
+          menuId: 1,
+          isDraft: 1,
+          notes: '',
+          config
+        });
+        if (res && (res.status === 'success' || res.orderId || res.succ_code)) {
+          if (addToCart) {
+            itemsToSync.forEach(it => addToCart(it));
+          }
+          alert(`Order summary added to cart for ${selectedStudent.name}! Redirecting to Shopping Cart.`);
+          setActiveTab('cart');
+        } else {
+          alert(res?.message || 'Failed to add order to cart.');
+        }
+      } catch (err) {
+        console.error('Order API error in HomeDashboard:', err);
+        const errMsg = err.response?.data?.message
+          || err.response?.data?.detail?.message
+          || (Array.isArray(err.response?.data?.detail) ? err.response?.data?.detail.map(d => d.msg).join(', ') : null)
+          || err.message
+          || 'Failed to add order to cart.';
+        alert(errMsg);
+      }
     } else {
       alert("Please select at least one lunch item with a quantity greater than zero.");
     }
@@ -125,8 +166,8 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
                     <button style={styles.iconBtn} onClick={() => alert(`Edit student ${student.name}`)} title="Edit">
                       <i className="lni lni-pencil" style={{ color: '#E29578' }}></i>
                     </button>
-                    <button 
-                      style={styles.iconBtn} 
+                    <button
+                      style={styles.iconBtn}
                       onClick={() => setStudents(prev => prev.filter(s => s.id !== student.id))}
                       title="Delete"
                     >
@@ -149,9 +190,9 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
                     <span style={styles.detailLabel}>Classroom:</span>
                     <span style={styles.detailValue}>{student.classroom}</span>
                   </div>
-                  
+
                   <div style={styles.balanceDivider}></div>
-                  
+
                   <div style={styles.balanceRow}>
                     <div>
                       <div style={styles.balLabel}>Balance Owed</div>
@@ -164,8 +205,8 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
                   </div>
                 </div>
 
-                <button 
-                  className="btn btn-primary" 
+                <button
+                  className="btn btn-primary"
                   style={styles.orderBtn}
                   onClick={() => handleStudentSelectForOrder(student)}
                 >
@@ -175,8 +216,8 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
             ))}
 
             {/* Add Student Card Button */}
-            <div 
-              style={{...styles.studentCard, ...styles.addStudentCard}}
+            <div
+              style={{ ...styles.studentCard, ...styles.addStudentCard }}
               onClick={() => setActiveTab('children')}
             >
               <i className="lni lni-circle-plus" style={styles.addIcon}></i>
@@ -185,8 +226,8 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
           </div>
 
           <div style={styles.bottomBar}>
-            <button 
-              className="btn btn-primary" 
+            <button
+              className="btn btn-primary"
               style={{ padding: '12px 24px' }}
               onClick={() => setActiveTab('cart')}
             >
@@ -207,14 +248,14 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
               <h2>Weekly Ordering Menu</h2>
               <p className="text-muted">Ordering for: <strong style={{ color: 'var(--primary)' }}>{selectedStudent?.name}</strong></p>
             </div>
-            
+
             {/* Filter Bar */}
             <div style={styles.filterRow}>
               <div style={styles.filterGroup}>
                 <label style={styles.filterLabel}>Campus</label>
-                <select 
-                  className="form-control" 
-                  value={selectedCampus} 
+                <select
+                  className="form-control"
+                  value={selectedCampus}
                   onChange={(e) => setSelectedCampus(e.target.value)}
                   style={{ padding: '6px 12px', fontSize: '13px' }}
                 >
@@ -224,14 +265,14 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
               </div>
 
               <div style={styles.toggleGroup}>
-                <button 
-                  style={{...styles.toggleBtn, ...(viewType === 'Week' ? styles.toggleBtnActive : {})}}
+                <button
+                  style={{ ...styles.toggleBtn, ...(viewType === 'Week' ? styles.toggleBtnActive : {}) }}
                   onClick={() => setViewType('Week')}
                 >
                   Week
                 </button>
-                <button 
-                  style={{...styles.toggleBtn, ...(viewType === 'Month' ? styles.toggleBtnActive : {})}}
+                <button
+                  style={{ ...styles.toggleBtn, ...(viewType === 'Month' ? styles.toggleBtnActive : {}) }}
                   onClick={() => setViewType('Month')}
                 >
                   Month
@@ -240,9 +281,9 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
 
               <div style={styles.filterGroup}>
                 <label style={styles.filterLabel}>Copy order from</label>
-                <select 
-                  className="form-control" 
-                  value={copyFromStudent} 
+                <select
+                  className="form-control"
+                  value={copyFromStudent}
                   onChange={(e) => setCopyFromStudent(e.target.value)}
                   style={{ padding: '6px 12px', fontSize: '13px' }}
                 >
@@ -254,9 +295,9 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
               </div>
 
               <div style={styles.checkboxGroup}>
-                <input 
-                  type="checkbox" 
-                  id="firstItemAll" 
+                <input
+                  type="checkbox"
+                  id="firstItemAll"
                   checked={firstItemAllDays}
                   onChange={(e) => setFirstItemAllDays(e.target.checked)}
                 />
@@ -302,15 +343,15 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
                             <span style={styles.foodEmoji}>{item.image}</span>
                             <span style={styles.sizeTag}>{item.size}</span>
                           </div>
-                          
+
                           <h4 style={styles.foodName}>{item.name}</h4>
-                          
+
                           {/* Allergen Icons */}
                           <div style={styles.allergensList}>
-                            {item.isVegan && <span style={{...styles.dot, backgroundColor: '#28A745'}} title="Vegan"></span>}
-                            {item.isVegetarian && <span style={{...styles.dot, backgroundColor: '#83C5BE'}} title="Vegetarian"></span>}
-                            {item.isGlutenFree && <span style={{...styles.dot, backgroundColor: '#E29578'}} title="Gluten Free"></span>}
-                            {item.allergens.length > 0 && <span style={{...styles.dot, backgroundColor: '#E54A4B'}} title={`Allergens: ${item.allergens.join(', ')}`}></span>}
+                            {item.isVegan && <span style={{ ...styles.dot, backgroundColor: '#28A745' }} title="Vegan"></span>}
+                            {item.isVegetarian && <span style={{ ...styles.dot, backgroundColor: '#83C5BE' }} title="Vegetarian"></span>}
+                            {item.isGlutenFree && <span style={{ ...styles.dot, backgroundColor: '#E29578' }} title="Gluten Free"></span>}
+                            {item.allergens.length > 0 && <span style={{ ...styles.dot, backgroundColor: '#E54A4B' }} title={`Allergens: ${item.allergens.join(', ')}`}></span>}
                           </div>
 
                           {/* Addons Counter Indicator */}
@@ -322,19 +363,19 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
 
                           <div style={styles.foodFooter}>
                             <span style={styles.foodPrice}>${item.price.toFixed(2)}</span>
-                            
+
                             {/* Quantity Selector */}
                             <div style={styles.qtyContainer}>
-                              <button 
-                                style={styles.qtyBtn} 
+                              <button
+                                style={styles.qtyBtn}
                                 onClick={() => updateQuantity(day, item, -1)}
                                 disabled={isAutoSelected}
                               >
                                 -
                               </button>
                               <span style={styles.qtyVal}>{currentQty}</span>
-                              <button 
-                                style={styles.qtyBtn} 
+                              <button
+                                style={styles.qtyBtn}
                                 onClick={() => updateQuantity(day, item, 1)}
                                 disabled={isAutoSelected}
                               >
@@ -355,19 +396,19 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
           <div style={styles.menuFooter}>
             <div style={styles.legendContainer}>
               <div style={styles.legendItem}>
-                <span style={{...styles.dot, backgroundColor: '#28A745'}}></span>
+                <span style={{ ...styles.dot, backgroundColor: '#28A745' }}></span>
                 <span>Vegan</span>
               </div>
               <div style={styles.legendItem}>
-                <span style={{...styles.dot, backgroundColor: '#83C5BE'}}></span>
+                <span style={{ ...styles.dot, backgroundColor: '#83C5BE' }}></span>
                 <span>Vegetarian</span>
               </div>
               <div style={styles.legendItem}>
-                <span style={{...styles.dot, backgroundColor: '#E29578'}}></span>
+                <span style={{ ...styles.dot, backgroundColor: '#E29578' }}></span>
                 <span>Gluten Free</span>
               </div>
               <div style={styles.legendItem}>
-                <span style={{...styles.dot, backgroundColor: '#E54A4B'}}></span>
+                <span style={{ ...styles.dot, backgroundColor: '#E54A4B' }}></span>
                 <span>Allergens</span>
               </div>
               <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => alert('Add order notes')}>
@@ -383,7 +424,7 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
                 NEXT CHILD
               </button>
               <button className="btn btn-primary" onClick={handleFinishOrder}>
-                FINISH ORDER
+                Add To Cart
               </button>
             </div>
           </div>

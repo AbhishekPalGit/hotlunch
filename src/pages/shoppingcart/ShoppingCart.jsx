@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { FiTrash2, FiRefreshCw } from 'react-icons/fi';
-import { getCartApi, deleteCartItemApi, calculateTotalApi } from '../../services/api';
+import { getCartApi, deleteCartItemApi, calculateTotalApi, getChildrenApi } from '../../services/api';
 import { ShimmerCart } from '../../components/Shimmer';
 
-
-const ShoppingCart = () => {
+const ShoppingCart = ({ cartItems = [], removeFromCart, clearCart, refreshCart }) => {
   const navigate = useNavigate();
+  const [childrenList, setChildrenList] = useState([]);
   const [cartGroups, setCartGroups] = useState([]);   // grouped by child
   const [flatItems, setFlatItems]   = useState([]);   // flat list for delete actions
   const [loading, setLoading]       = useState(true);
@@ -16,66 +16,152 @@ const ShoppingCart = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null); // null = clear all
 
+  // Load children for name lookup
+  useEffect(() => {
+    getChildrenApi()
+      .then(res => {
+        if (res && Array.isArray(res.data)) {
+          setChildrenList(res.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const resolveChildName = (childId, fallbackName) => {
+    const found = (childrenList || []).find(c => c && (String(c.id) === String(childId)));
+    if (found) {
+      return found.fullName || `${found.firstName || ''} ${found.lastName || ''}`.trim() || found.name || 'Student';
+    }
+    if (fallbackName && !String(fallbackName).startsWith('Child #')) {
+      return fallbackName;
+    }
+    return fallbackName || 'Student';
+  };
+
   /* ── Fetch cart from API ── */
   const fetchCart = async () => {
     setLoading(true);
     try {
       const res = await getCartApi();
       if (res && res.status === 'success') {
-        // data can be an array of child groups or a flat array
         const data = res.data || [];
-        if (Array.isArray(data)) {
-          // Try to detect grouped vs flat
+        if (Array.isArray(data) && data.length > 0) {
           const isGrouped = data.length > 0 && (data[0].childName || data[0].student || data[0].dates || data[0].items);
           if (isGrouped) {
             setCartGroups(data);
-            // Flatten for display
             const flat = [];
             data.forEach(group => {
-              const childName = group.childName || group.student || group.name || 'Student';
+              const childName = resolveChildName(
+                group.childId || group.typeId,
+                group.childName || group.studentName || group.student || group.name
+              );
               const dates = group.dates || [];
-              dates.forEach(dateBlock => {
-                const dateLabel = dateBlock.date || dateBlock.displayDate || '--';
-                const items = dateBlock.items || dateBlock.itemsArray || [];
-                items.forEach(item => {
+              if (dates.length > 0) {
+                dates.forEach(dateBlock => {
+                  const dateLabel = dateBlock.date || dateBlock.displayDate || '--';
+                  const items = dateBlock.items || dateBlock.itemsArray || [];
+                  items.forEach(item => {
+                    flat.push({
+                      id:       item.orderId || item.id,
+                      orderId:  item.orderId || group.orderId,
+                      student:  childName,
+                      studentName: childName,
+                      item:     item.name || item.itemName || '--',
+                      date:     dateLabel,
+                      price:    parseFloat(item.price || 0),
+                      quantity: item.quantity || 1,
+                      size:     item.size || item.portionSize || item.sizeLabel || '',
+                      addons:   item.addon || item.addons || [],
+                    });
+                  });
+                });
+              } else if (group.items && group.items.length > 0) {
+                group.items.forEach(item => {
                   flat.push({
                     id:       item.orderId || item.id,
+                    orderId:  item.orderId || group.orderId,
                     student:  childName,
+                    studentName: childName,
                     item:     item.name || item.itemName || '--',
-                    date:     dateLabel,
+                    date:     item.orderDate || '--',
                     price:    parseFloat(item.price || 0),
                     quantity: item.quantity || 1,
-                    size:     item.size || item.portionSize || '',
+                    size:     item.size || item.portionSize || item.sizeLabel || '',
                     addons:   item.addon || item.addons || [],
                   });
                 });
-              });
+              }
             });
             setFlatItems(flat);
           } else {
-            // Flat response — treat each record as an order item
             setCartGroups([]);
-            const flat = data.map(item => ({
-              id:       item.orderId || item.id,
-              student:  item.student || item.childName || '--',
-              item:     item.name || item.itemName || '--',
-              date:     item.date || item.displayDate || '--',
-              price:    parseFloat(item.price || item.amount || 0),
-              quantity: item.quantity || 1,
-              size:     item.size || '',
-              addons:   item.addon || item.addons || [],
-            }));
+            const flat = data.map(item => {
+              const childName = resolveChildName(
+                item.childId || item.typeId,
+                item.student || item.childName || item.studentName
+              );
+              return {
+                id:       item.orderId || item.id,
+                orderId:  item.orderId || item.id,
+                student:  childName,
+                studentName: childName,
+                item:     item.name || item.itemName || '--',
+                date:     item.date || item.displayDate || '--',
+                price:    parseFloat(item.price || item.amount || 0),
+                quantity: item.quantity || 1,
+                size:     item.size || '',
+                addons:   item.addon || item.addons || [],
+              };
+            });
             setFlatItems(flat);
           }
+          await handleCalcTotal(res.data);
+          return;
         }
-        // Also compute totals
-        await handleCalcTotal(res.data);
+      }
+      // Fallback to locally added cart items
+      if (cartItems && cartItems.length > 0) {
+        setCartGroups([]);
+        const flat = cartItems.map((item, idx) => {
+          const sName = resolveChildName(
+            item.childId || item.typeId || item.studentId,
+            item.studentName || item.student || item.childName
+          );
+          return {
+            id:       item.id || `local_${idx}`,
+            orderId:  item.orderId,
+            student:  sName,
+            studentName: sName,
+            item:     item.itemName || item.name || 'Lunch Meal',
+            date:     item.date || item.day || '--',
+            price:    parseFloat(item.price || 0),
+            quantity: parseInt(item.quantity, 10) || 1,
+            size:     item.size || 'REGULAR',
+            addons:   item.addons || []
+          };
+        });
+        setFlatItems(flat);
       } else {
         setFlatItems([]);
       }
     } catch (err) {
       console.error('Cart fetch error:', err);
-      setFlatItems([]);
+      if (cartItems && cartItems.length > 0) {
+        setCartGroups([]);
+        const flat = cartItems.map((item, idx) => ({
+          id:       item.id || `local_${idx}`,
+          student:  item.studentName || item.student || 'Student',
+          item:     item.itemName || item.name || 'Lunch Meal',
+          date:     item.date || item.day || '--',
+          price:    parseFloat(item.price || 0),
+          quantity: parseInt(item.quantity, 10) || 1,
+          size:     item.size || 'REGULAR',
+          addons:   item.addons || []
+        }));
+        setFlatItems(flat);
+      } else {
+        setFlatItems([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -116,7 +202,7 @@ const ShoppingCart = () => {
 
   useEffect(() => {
     fetchCart();
-  }, []);
+  }, [cartItems]);
 
   /* ── Remove single item ── */
   const confirmDelete = (item) => {
@@ -130,21 +216,29 @@ const ShoppingCart = () => {
       // Clear all
       try {
         await deleteCartItemApi('all');
-        setFlatItems([]);
-        setSummary(null);
-        toast.success('Cart cleared!');
       } catch (err) {
-        toast.error(err.response?.data?.message || 'Failed to clear cart');
+        console.log('Cart clear notice:', err);
       }
+      if (clearCart) clearCart();
+      setFlatItems([]);
+      setSummary(null);
+      toast.success('Cart cleared!');
+      if (refreshCart) refreshCart();
       return;
     }
     try {
-      await deleteCartItemApi(deleteTarget.id);
+      if (typeof deleteTarget.id === 'string' && deleteTarget.id.startsWith('local_')) {
+        const localIdx = parseInt(deleteTarget.id.replace('local_', ''), 10);
+        if (removeFromCart) removeFromCart(localIdx);
+      } else {
+        await deleteCartItemApi(deleteTarget.id);
+      }
       setFlatItems(prev => prev.filter(c => c.id !== deleteTarget.id));
       toast.success('Item removed from cart');
-      fetchCart(); // re-fetch to update totals
+      if (refreshCart) refreshCart();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to remove item');
+      setFlatItems(prev => prev.filter(c => c.id !== deleteTarget.id));
+      toast.info('Item removed');
     }
     setDeleteTarget(null);
   };
@@ -275,7 +369,18 @@ const ShoppingCart = () => {
               <button
                 className="btn-primary"
                 style={{ width: '100%', marginTop: 16 }}
-                onClick={() => navigate('/checkout')}
+                onClick={() => {
+                  const ids = [];
+                  if (cartGroups && cartGroups.length > 0) {
+                    cartGroups.forEach(g => { if (g.orderId) ids.push(g.orderId); });
+                  }
+                  flatItems.forEach(it => {
+                    if (it.orderId) ids.push(it.orderId);
+                    if (typeof it.id === 'number') ids.push(it.id);
+                  });
+                  const uniqueIds = [...new Set(ids)];
+                  navigate('/checkout', { state: { orderIds: uniqueIds } });
+                }}
               >
                 PROCEED TO CHECKOUT
               </button>

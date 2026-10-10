@@ -175,10 +175,25 @@ const LoginPage = ({ onLoginSuccess }) => {
 
     try {
       const res = await verifyCampusApi(code);
-      if (res && (res.status === 'success' || res.campusId)) {
+      if (res && (res.status === 'success' || res.campusId || res.data)) {
+        const campusId = parseInt(
+          res.campusId ??
+          res.campus_id ??
+          res.data?.campusId ??
+          res.data?.campus_id ??
+          res.data?.id ??
+          res.id ??
+          (!isNaN(parseInt(code, 10)) ? code : 465),
+          10
+        ) || 465;
+
+        const campusName = (typeof res.data === 'string' ? res.data : (res.data?.name || res.data?.campusName))
+          || res.campusName
+          || 'Loyola Main Campus';
+
         const campusInfo = {
-          campusId: res.campusId || 465,
-          name: res.data || res.campusName || 'Loyola Main Campus'
+          campusId,
+          name: campusName
         };
 
         // Fetch grades for this campus
@@ -406,29 +421,73 @@ const LoginPage = ({ onLoginSuccess }) => {
       gender: genderInt,
       password: regPassword,
       confirmPassword: regConfirmPassword,
-      childData: childrenList.map(c => ({
-        fName: c.fName.trim(),
-        lName: c.lName.trim() || regLastName.trim(),
-        campusCode: c.campusCode.trim(),
-        campusId: parseInt(c.verifiedCampus?.campusId || 465, 10) || 465,
-        grade: parseInt(c.grade, 10) || 1,
-        classroom: parseInt(c.classroom, 10) || 101
-      }))
+      childData: childrenList.map(c => {
+        const campusCodeInt = parseInt(
+          c.verifiedCampus?.campusId ??
+          c.verifiedCampus?.id ??
+          c.campusId ??
+          (!isNaN(parseInt(c.campusCode, 10)) ? c.campusCode : 465),
+          10
+        ) || 465;
+
+        return {
+          fName: c.fName.trim(),
+          lName: c.lName.trim() || regLastName.trim(),
+          campusCode: campusCodeInt,
+          campusId: campusCodeInt,
+          grade: parseInt(c.grade, 10) || 1,
+          classroom: parseInt(c.classroom, 10) || 1
+        };
+      })
     };
 
     try {
       const res = await registerApi(payload);
-      if (res && (res.status === 'success' || res.access_token)) {
-        if (res.access_token) localStorage.setItem('access_token', res.access_token);
+      if (res && (res.status === 'success' || res.access_token || res.data?.access_token)) {
+        let token = res.access_token || res.data?.access_token || res.token || res.data?.token;
+        let refreshToken = res.refresh_token || res.data?.refresh_token;
+        let userData = res.user || res.data?.user;
+
+        // If register response does not bundle access token directly, automatically authenticate via loginApi
+        if (!token) {
+          try {
+            const loginRes = await loginApi({
+              login: regEmail.trim(),
+              password: regPassword,
+              remember: 1
+            });
+            if (loginRes && (loginRes.access_token || loginRes.data?.access_token)) {
+              token = loginRes.access_token || loginRes.data?.access_token;
+              refreshToken = loginRes.refresh_token || loginRes.data?.refresh_token;
+              userData = loginRes.user || loginRes.data?.user;
+            }
+          } catch (loginErr) {
+            console.log('Auto login after registration notice:', loginErr);
+          }
+        }
+
+        if (token) localStorage.setItem('access_token', token);
+        if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
+
+        const fallbackUser = {
+          name: `${regFirstName} ${regLastName}`.trim(),
+          firstName: regFirstName.trim(),
+          lastName: regLastName.trim(),
+          email: regEmail.trim()
+        };
+        const finalUser = userData || fallbackUser;
+        localStorage.setItem('user_details', JSON.stringify(finalUser));
         localStorage.setItem('is_logged_in', 'true');
-        toast.success('Registration successful! Welcome to HotLunch.');
-        if (onLoginSuccess) onLoginSuccess({ name: `${regFirstName} ${regLastName}`, email: regEmail });
+
+        const userDisplayName = finalUser.name || finalUser.firstName || `${regFirstName} ${regLastName}`.trim();
+        if (onLoginSuccess) onLoginSuccess(finalUser);
+
+        toast.success(`Welcome, ${userDisplayName}! Registration successful.`);
         navigate('/dashboard');
       } else {
-        toast.success('Account created successfully! Logging you in...');
-        setAuthMode('login');
-        setLogin(regEmail);
-        setPassword(regPassword);
+        const msg = res?.message || 'Registration failed. Please try again.';
+        setRegError(msg);
+        toast.error(msg);
       }
     } catch (err) {
       let msg = 'Registration failed. Please check form details.';
