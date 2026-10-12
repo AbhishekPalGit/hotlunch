@@ -1,43 +1,100 @@
-import React, { useState } from 'react';
-import { createOrderApi } from '../services/api';
+import React, { useState, useEffect } from 'react';
+import { createOrderApi, getMenusApi, getMenusForChildApi, getMenuDetailApi } from '../services/api';
 
 const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveTab }) => {
   const [currentView, setCurrentView] = useState('students_list'); // 'students_list' or 'weekly_menu'
   const [selectedStudent, setSelectedStudent] = useState(null);
 
   // Weekly Menu filters & state
-  const [selectedCampus, setSelectedCampus] = useState('Valleyview Middle New');
+  const [selectedCampus, setSelectedCampus] = useState('');
   const [viewType, setViewType] = useState('Week'); // 'Week' or 'Month'
   const [copyFromStudent, setCopyFromStudent] = useState('');
   const [firstItemAllDays, setFirstItemAllDays] = useState(false);
-  const [activeWeekStart, setActiveWeekStart] = useState(new Date("2026-08-12"));
+  const [activeWeekStart, setActiveWeekStart] = useState(new Date());
+  const [loadingMenu, setLoadingMenu] = useState(false);
 
   // Menu selection quantities state (student_id -> day -> item_name -> qty)
   const [menuQuantities, setMenuQuantities] = useState({});
 
-  // Mock Menu Data for Monday - Friday
-  const menuData = {
-    Monday: [
-      { id: 'm1', name: 'Double Cheese Burger', size: 'LARGE', price: 12.00, image: '🍔', isVegetarian: true, allergens: ['Dairy', 'Gluten'] },
-      { id: 'm2', name: 'Baked Potato Soup', size: 'REGULAR', price: 8.50, image: '🥣', isVegan: true, allergens: [] }
-    ],
-    Tuesday: [
-      { id: 't1', name: 'Honey Glazed Wings', size: 'LARGE', price: 15.00, image: '🍗', allergens: ['Soy', 'Gluten'], addonsCount: 3 },
-      { id: 't2', name: 'Strawberry Juice', size: 'REGULAR', price: 3.25, image: '🍓', isVegan: true, allergens: [] }
-    ],
-    Wednesday: [
-      { id: 'w1', name: 'Chicken Caesar Salad', size: 'REGULAR', price: 11.50, image: '🥗', allergens: ['Dairy', 'Fish', 'Gluten'] },
-      { id: 'w2', name: 'Double Cheese Burger', size: 'LARGE', price: 12.00, image: '🍔', isVegetarian: true, allergens: ['Dairy', 'Gluten'] }
-    ],
-    Thursday: [
-      { id: 'th1', name: 'Honey Glazed Wings', size: 'LARGE', price: 15.00, image: '🍗', allergens: ['Soy', 'Gluten'], addonsCount: 0 },
-      { id: 'th2', name: 'Baked Potato Soup', size: 'REGULAR', price: 8.50, image: '🥣', isVegan: true, allergens: [] }
-    ],
-    Friday: [
-      { id: 'f1', name: 'Pepperoni Pizza Slice', size: 'LARGE', price: 9.75, image: '🍕', allergens: ['Dairy', 'Gluten'] },
-      { id: 'f2', name: 'Fruit Salad Medley', size: 'REGULAR', price: 6.00, image: '🍉', isVegan: true, isGlutenFree: true, allergens: [] }
-    ]
-  };
+  // Dynamic Menu Data for Monday - Friday (loaded from API)
+  const [menuData, setMenuData] = useState({
+    Monday: [],
+    Tuesday: [],
+    Wednesday: [],
+    Thursday: [],
+    Friday: []
+  });
+
+  // Fetch menus dynamically for selected student
+  useEffect(() => {
+    if (!selectedStudent) return;
+    setLoadingMenu(true);
+
+    const loadMenu = async () => {
+      try {
+        let menuList = [];
+        if (selectedStudent.id) {
+          const res = await getMenusForChildApi(selectedStudent.id);
+          if (res && res.status === 'success' && res.data) {
+            menuList = Array.isArray(res.data) ? res.data : (res.data.menus || []);
+          }
+        }
+        if (menuList.length === 0) {
+          const genRes = await getMenusApi();
+          if (genRes && genRes.status === 'success' && genRes.data) {
+            menuList = Array.isArray(genRes.data) ? genRes.data : (genRes.data.menus || []);
+          }
+        }
+
+        if (menuList.length > 0) {
+          const menuId = menuList[0].id;
+          const detailRes = await getMenuDetailApi(menuId, selectedStudent.id);
+          const rawDetail = detailRes?.data || detailRes;
+          const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+          const parsed = { Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [] };
+
+          let items = [];
+          if (Array.isArray(rawDetail)) items = rawDetail;
+          else if (rawDetail?.config && Array.isArray(rawDetail.config)) {
+            rawDetail.config.forEach(b => {
+              const bItems = Array.isArray(b.itemsArray) ? b.itemsArray : (b.items || []);
+              items.push(...bItems);
+            });
+          } else if (rawDetail?.items) items = rawDetail.items;
+
+          items.forEach((item, idx) => {
+            let day = DAYS[idx % 5];
+            if (item.day) {
+              const matched = DAYS.find(d => d.toLowerCase() === String(item.day).toLowerCase());
+              if (matched) day = matched;
+            }
+            parsed[day].push({
+              id: item.id || idx + 1,
+              name: item.name || item.title || item.itemName || 'Meal Option',
+              size: item.size || 'REGULAR',
+              price: parseFloat(item.price || item.amount || 0),
+              image: item.image || item.photoUrl || '🍲',
+              isVegetarian: !!(item.veg || item.isVegetarian),
+              isVegan: !!(item.vegan || item.isVegan),
+              isGlutenFree: !!(item.glutenFree || item.isGlutenFree),
+              allergens: item.allergens || []
+            });
+          });
+
+          setMenuData(parsed);
+        } else {
+          setMenuData({ Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [] });
+        }
+      } catch (err) {
+        console.log('Error loading dynamic menu in HomeDashboard:', err);
+        setMenuData({ Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [] });
+      } finally {
+        setLoadingMenu(false);
+      }
+    };
+
+    loadMenu();
+  }, [selectedStudent]);
 
   const handleStudentSelectForOrder = (student) => {
     setSelectedStudent(student);
@@ -307,30 +364,65 @@ const HomeDashboard = ({ students, setStudents, addToCart, activeTab, setActiveT
           </div>
 
           {/* Week Calendar Navigation */}
-          <div style={styles.calendarNav}>
-            <button style={styles.arrowBtn} onClick={() => alert('Previous week')}>
-              <i className="lni lni-chevron-left"></i>
-            </button>
-            <span style={styles.weekDateRange}>12 Aug - 16 Aug, 2026</span>
-            <button style={styles.arrowBtn} onClick={() => alert('Next week')}>
-              <i className="lni lni-chevron-right"></i>
-            </button>
-          </div>
+          {(() => {
+            const d = new Date(activeWeekStart || new Date());
+            const dow = d.getDay();
+            const diff = d.getDate() - dow + (dow === 0 ? -6 : 1);
+            const monday = new Date(d.setDate(diff));
+            const friday = new Date(monday);
+            friday.setDate(monday.getDate() + 4);
+            const rangeStr = `${monday.getDate()} ${monday.toLocaleDateString('en-US', { month: 'short' })} - ${friday.getDate()} ${friday.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+
+            return (
+              <div style={styles.calendarNav}>
+                <button
+                  style={styles.arrowBtn}
+                  onClick={() => {
+                    const prev = new Date(monday);
+                    prev.setDate(prev.getDate() - 7);
+                    setActiveWeekStart(prev);
+                  }}
+                >
+                  <i className="lni lni-chevron-left"></i>
+                </button>
+                <span style={styles.weekDateRange}>{rangeStr}</span>
+                <button
+                  style={styles.arrowBtn}
+                  onClick={() => {
+                    const next = new Date(monday);
+                    next.setDate(next.getDate() + 7);
+                    setActiveWeekStart(next);
+                  }}
+                >
+                  <i className="lni lni-chevron-right"></i>
+                </button>
+              </div>
+            );
+          })()}
 
           {/* Daily Menu Columns Grid */}
           <div style={styles.menuGrid}>
-            {Object.keys(menuData).map((day) => {
-              const items = menuData[day];
+            {Object.keys(menuData).map((day, dIdx) => {
+              const items = menuData[day] || [];
+              const d = new Date(activeWeekStart || new Date());
+              const dow = d.getDay();
+              const diff = d.getDate() - dow + (dow === 0 ? -6 : 1);
+              const dayDate = new Date(d.setDate(diff + dIdx));
+              const formattedDate = `${dayDate.getDate()} ${dayDate.toLocaleDateString('en-US', { month: 'short' })}`;
+
               return (
                 <div key={day} style={styles.menuColumn}>
                   <div style={styles.columnHeader}>
                     <div style={styles.columnDay}>{day}</div>
-                    <div style={styles.columnDate}>
-                      {day === 'Monday' ? '12 Aug' : day === 'Tuesday' ? '13 Aug' : day === 'Wednesday' ? '14 Aug' : day === 'Thursday' ? '15 Aug' : '16 Aug'}
-                    </div>
+                    <div style={styles.columnDate}>{formattedDate}</div>
                   </div>
 
                   <div style={styles.columnBody}>
+                    {items.length === 0 ? (
+                      <div style={{ padding: '30px 10px', fontSize: 12, color: '#94A3B8', textAlign: 'center' }}>
+                        No meals scheduled
+                      </div>
+                    ) : null}
                     {items.map((item, idx) => {
                       // Apply 'First item for all days' auto-quantity of 1 if checked and first index
                       const studentId = selectedStudent?.id;

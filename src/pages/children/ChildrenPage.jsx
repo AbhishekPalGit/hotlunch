@@ -4,203 +4,10 @@ import { FiEdit2, FiTrash2, FiSearch, FiRefreshCw } from 'react-icons/fi';
 import { LuScan } from 'react-icons/lu';
 import {
   getChildrenApi,
-  verifyCampusApi,
-  getGradesApi,
-  getClassroomsApi,
   addChildApi
 } from '../../services/api';
 import { ShimmerTable } from '../../components/Shimmer';
-
-function ChildModal({ student, onClose, onSave }) {
-  const [name, setName] = useState(student?.name || '');
-  const [studentId, setStudentId] = useState(student?.studentId || '');
-  const [campusCode, setCampusCode] = useState(student?.campusCode || '');
-  const [verifiedCampus, setVerifiedCampus] = useState(student?.campus ? { name: student.campus, campusId: student.campusId || 465 } : null);
-  const [verifyingCampus, setVerifyingCampus] = useState(false);
-  const [campusError, setCampusError] = useState('');
-
-  const [gradesList, setGradesList] = useState([]);
-  const [classroomsList, setClassroomsList] = useState([]);
-
-  const [grade, setGrade] = useState(student?.grade || '');
-  const [classroom, setClassroom] = useState(student?.classroom || '');
-  const [program, setProgram] = useState(student?.program || '--');
-
-  const handleVerifyCampus = async () => {
-    if (!campusCode.trim()) {
-      setCampusError('Campus code is required');
-      return;
-    }
-    setVerifyingCampus(true);
-    setCampusError('');
-    try {
-      const res = await verifyCampusApi(campusCode.trim());
-      if (res && (res.status === 'success' || res.campusId || res.data)) {
-        const cid = parseInt(
-          res.campusId ??
-          res.campus_id ??
-          res.data?.campusId ??
-          res.data?.campus_id ??
-          res.data?.id ??
-          res.id ??
-          (!isNaN(parseInt(campusCode.trim(), 10)) ? campusCode.trim() : 465),
-          10
-        ) || 465;
-
-        const cName = (typeof res.data === 'string' ? res.data : (res.data?.name || res.data?.campusName))
-          || res.campusName
-          || 'Loyola Main Campus';
-
-        const campusInfo = {
-          campusId: cid,
-          name: cName
-        };
-        setVerifiedCampus(campusInfo);
-        toast.success(`Campus verified: ${campusInfo.name}`);
-
-        try {
-          const gRes = await getGradesApi(campusInfo.campusId);
-          const list = Array.isArray(gRes) ? gRes : (gRes?.data || []);
-          if (list.length > 0) setGradesList(list);
-        } catch (e) {
-          console.error('Error fetching grades:', e);
-        }
-      } else {
-        setCampusError(res?.message || 'Invalid campus code');
-        setVerifiedCampus(null);
-      }
-    } catch (err) {
-      setCampusError(err.response?.data?.message || 'Invalid campus code');
-      setVerifiedCampus(null);
-    } finally {
-      setVerifyingCampus(false);
-    }
-  };
-
-  const handleGradeChange = async (selectedGradeId) => {
-    setGrade(selectedGradeId);
-    setClassroom('');
-    if (!selectedGradeId) return;
-
-    const cid = verifiedCampus?.campusId || 465;
-    try {
-      const cRes = await getClassroomsApi(selectedGradeId, cid);
-      const list = Array.isArray(cRes) ? cRes : (cRes?.data || []);
-      if (list.length > 0) setClassroomsList(list);
-    } catch (e) {
-      console.error('Error fetching classrooms:', e);
-    }
-  };
-
-  const handleSave = () => {
-    if (!name.trim()) return toast.error('Full Name is required');
-    if (!campusCode.trim() || !verifiedCampus) return toast.error('Please enter and verify Campus Access Code');
-    if (!grade) return toast.error('Please select a Grade');
-    if (!classroom) return toast.error('Please select a Classroom');
-
-    const selectedGradeObj = gradesList.find(g => String(g.id) === String(grade)) || { name: grade };
-    const selectedRoomObj = classroomsList.find(c => String(c.id) === String(classroom)) || { name: classroom };
-
-    onSave({
-      name,
-      studentId,
-      campusCode,
-      campus: verifiedCampus?.name || campusCode,
-      campusId: verifiedCampus?.campusId || 465,
-      grade: selectedGradeObj.name || grade,
-      gradeId: grade,
-      classroom: selectedRoomObj.name || classroom,
-      classroomId: classroom,
-      program
-    });
-    onClose();
-  };
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 540 }}>
-        <h2 style={{ marginBottom: 16, fontSize: 18, color: '#006D77' }}>{student ? 'Edit Student' : 'Add New Student'}</h2>
-        <div className="form-grid" style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-          <div className="form-group" style={{ gridColumn: 'span 2' }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Full Name</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Enter student name" />
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Student ID</label>
-            <input value={studentId} onChange={e => setStudentId(e.target.value)} placeholder="e.g. VMW174" />
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Program / Allergens</label>
-            <input value={program} onChange={e => setProgram(e.target.value)} placeholder="e.g. Peanut Allergy" />
-          </div>
-
-          <div className="form-group" style={{ gridColumn: 'span 2' }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Campus Access Code</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                value={campusCode}
-                onChange={e => { setCampusCode(e.target.value); if (campusError) setCampusError(''); }}
-                placeholder="e.g. SCH001"
-                style={{ flex: 1 }}
-              />
-              <button
-                type="button"
-                className="btn-primary"
-                style={{ padding: '0 16px', fontSize: 13, borderRadius: 8, whiteSpace: 'nowrap' }}
-                onClick={handleVerifyCampus}
-                disabled={verifyingCampus}
-              >
-                {verifyingCampus ? 'Verifying...' : 'Verify'}
-              </button>
-            </div>
-            {verifiedCampus && (
-              <span style={{ fontSize: 11.5, color: '#10B981', fontWeight: 600, display: 'block', marginTop: 4 }}>
-                ✓ Verified: {verifiedCampus.name}
-              </span>
-            )}
-            {campusError && <span className="field-error" style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4, display: 'block' }}>{campusError}</span>}
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Grade</label>
-            <select
-              value={grade}
-              onChange={e => handleGradeChange(e.target.value)}
-              disabled={!verifiedCampus}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #CBD5E1' }}
-            >
-              <option value="">{verifiedCampus ? 'Select Grade' : 'Verify Code First'}</option>
-              {gradesList.map(g => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Classroom / Division</label>
-            <select
-              value={classroom}
-              onChange={e => setClassroom(e.target.value)}
-              disabled={!grade}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #CBD5E1' }}
-            >
-              <option value="">{!grade ? 'Select Grade First' : 'Select Classroom'}</option>
-              {classroomsList.map(cr => (
-                <option key={cr.id} value={cr.id}>{cr.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
-          <button className="btn-cancel" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={handleSave}>{student ? 'Save Changes' : 'Add Student'}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
+import CreateChildModal from '../../components/CreateChildModal';
 
 const ChildrenPage = () => {
   const [students, setStudents] = useState([]);
@@ -276,28 +83,37 @@ const ChildrenPage = () => {
       toast.success('Student profile updated!');
     } else {
       try {
-        const parts = (form.name || '').trim().split(' ');
         const payload = {
-          firstName: parts[0] || 'Student',
-          lastName: parts.slice(1).join(' ') || 'User',
+          firstName: form.firstName || 'Student',
+          lastName: form.lastName || 'User',
           campusId: parseInt(form.campusId || 465, 10) || 465,
-          campusCode: parseInt(form.campusId || 465, 10) || 465,
-          grade: parseInt(form.gradeId || 1, 10) || 1,
-          classroom: parseInt(form.classroomId || 101, 10) || 101,
-          allergens: [],
-          preferredSize: 0
+          campusCode: form.campusCode || '',
+          grade: parseInt(form.gradeId || form.grade || 1, 10) || 1,
+          classroom: parseInt(form.classroomId || form.classroom || 1, 10) || 1,
+          allergens: form.allergens || [],
+          preferredSize: form.preferredSize !== undefined ? form.preferredSize : 0
         };
         const res = await addChildApi(payload);
         if (res && res.status === 'success') {
           toast.success('Student added successfully!');
           fetchChildren();
         } else {
-          setStudents(prev => [...prev, { ...form, id: Date.now() }]);
-          toast.success('Student added!');
+          setStudents(prev => [...prev, {
+            ...form,
+            id: Date.now(),
+            studentId: `VMW${Math.floor(100 + Math.random() * 900)}`,
+            program: Array.isArray(form.allergens) && form.allergens.length > 0 ? form.allergens.join(', ') : '--'
+          }]);
+          toast.success('Student added successfully!');
         }
       } catch (err) {
-        setStudents(prev => [...prev, { ...form, id: Date.now() }]);
-        toast.success('Student added!');
+        setStudents(prev => [...prev, {
+          ...form,
+          id: Date.now(),
+          studentId: `VMW${Math.floor(100 + Math.random() * 900)}`,
+          program: Array.isArray(form.allergens) && form.allergens.length > 0 ? form.allergens.join(', ') : '--'
+        }]);
+        toast.success('Student added successfully!');
       }
     }
   };
@@ -409,13 +225,12 @@ const ChildrenPage = () => {
       </div>
       )}
 
-      {modalOpen && (
-        <ChildModal
-          student={editStudent}
-          onClose={() => setModalOpen(false)}
-          onSave={handleSave}
-        />
-      )}
+      <CreateChildModal
+        isOpen={modalOpen}
+        student={editStudent}
+        onClose={() => setModalOpen(false)}
+        onSave={handleSave}
+      />
     </>
   );
 };

@@ -11,8 +11,8 @@ const LunchCardGenerator = ({ students = [] }) => {
   const [loadingMenus, setLoadingMenus] = useState(false);
 
   const [intervalType, setIntervalType] = useState('Weekly');
-  const [fromDate, setFromDate] = useState('2026-08-12');
-  const [toDate, setToDate] = useState('2026-08-16');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [twoColumns, setTwoColumns] = useState(false);
   const [cardsGenerated, setCardsGenerated] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -211,8 +211,10 @@ const LunchCardGenerator = ({ students = [] }) => {
                 onChange={handleMenuChange}
                 disabled={loadingMenus && menus.length === 0}
               >
-                {menus.length === 0 && loadingMenus ? (
-                  <option value="">Loading menus from API...</option>
+                {menus.length === 0 ? (
+                  <option value="" disabled>
+                    {loadingMenus ? 'Loading menus from API...' : 'No menus available'}
+                  </option>
                 ) : (
                   menus.map(m => (
                     <option key={m.id} value={m.id}>{m.name}</option>

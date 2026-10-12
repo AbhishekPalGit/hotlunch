@@ -21,36 +21,41 @@ export default function AddonModal({
 
   useEffect(() => {
     if (isOpen) {
-      setSelectedMap(initialSelections ? JSON.parse(JSON.stringify(initialSelections)) : {});
+      setSelectedMap(initialSelections && typeof initialSelections === 'object' ? JSON.parse(JSON.stringify(initialSelections)) : {});
     }
-  }, [isOpen, initialSelections]);
+  }, [isOpen]);
 
   if (!isOpen || !item) return null;
 
   const count = Math.max(1, parseInt(qty, 10) || 1);
 
-  // Parse available addons
-  let availableAddons = DEFAULT_ADDONS;
-  if (Array.isArray(item.addons) && item.addons.length > 0) {
-    availableAddons = item.addons.map((a, idx) => {
-      if (typeof a === 'string') {
-        return { id: `addon_${idx}`, name: a, price: 1.50 };
-      }
-      return {
-        id: a.id || `addon_${idx}`,
-        name: a.name || a.title || 'Addon',
-        price: parseFloat(a.price || 0)
-      };
-    });
-  }
+  // Parse available addons (supports both item.addons and item.addon from backend)
+  const rawList = Array.isArray(item.addons) && item.addons.length > 0
+    ? item.addons
+    : (Array.isArray(item.addon) && item.addon.length > 0 ? item.addon : DEFAULT_ADDONS);
+
+  const availableAddons = rawList.map((a, idx) => {
+    if (typeof a === 'string') {
+      return { id: `addon_${idx}`, name: a, price: 1.50 };
+    }
+    return {
+      id: a.id !== undefined ? a.id : `addon_${idx}`,
+      name: a.name || a.title || 'Addon',
+      price: parseFloat(a.price ?? a.sp ?? 0)
+    };
+  });
 
   const toggleAddon = (instIdx, addonId) => {
     setSelectedMap(prev => {
-      const currentList = prev[instIdx] || [];
-      const exists = currentList.includes(addonId);
-      const nextList = exists
-        ? currentList.filter(id => id !== addonId)
-        : [...currentList, addonId];
+      const currentList = prev[instIdx] ? [...prev[instIdx]] : [];
+      const strId = String(addonId);
+      const existsIndex = currentList.findIndex(id => String(id) === strId);
+      let nextList;
+      if (existsIndex >= 0) {
+        nextList = currentList.filter((_, idx) => idx !== existsIndex);
+      } else {
+        nextList = [...currentList, addonId];
+      }
       return { ...prev, [instIdx]: nextList };
     });
   };
@@ -92,16 +97,26 @@ export default function AddonModal({
 
                   <div className="addon-grid">
                     {availableAddons.map(addon => {
-                      const isChecked = currentSelected.includes(addon.id);
+                      const isChecked = currentSelected.some(id => String(id) === String(addon.id));
                       return (
-                        <label className="addon-checkbox-label" key={addon.id}>
+                        <div
+                          className="addon-checkbox-label"
+                          key={addon.id}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleAddon(instIdx, addon.id);
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        >
                           <input
                             type="checkbox"
                             checked={isChecked}
-                            onChange={() => toggleAddon(instIdx, addon.id)}
+                            readOnly
+                            style={{ pointerEvents: 'none' }}
                           />
                           <span>{addon.name} ${Number(addon.price).toFixed(2)}</span>
-                        </label>
+                        </div>
                       );
                     })}
                   </div>

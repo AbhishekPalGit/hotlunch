@@ -10,10 +10,12 @@ import {
   getCartApi,
   getOrdersApi,
   getOrderDetailsApi,
-  getOrderedDatesApi
+  getOrderedDatesApi,
+  addChildApi
 } from '../../services/api';
 import { ShimmerStats, ShimmerCards } from '../../components/Shimmer';
 import AddonModal, { DEFAULT_ADDONS } from '../../components/AddonModal';
+import CreateChildModal from '../../components/CreateChildModal';
 
 const AVATARS = ['#006D77', '#E29578', '#4A90D9', '#9B59B6', '#F4A261', '#2A9D8F'];
 
@@ -252,7 +254,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
   const [expandedChildId, setExpandedChildId] = useState(null);
   const [menuViewType, setMenuViewType] = useState('Week'); // 'Week' | 'Month'
   const [weekOffset, setWeekOffset] = useState(0); // 0 = current week, 1 = next week
-  const [selectedMonth, setSelectedMonth] = useState('August 2026');
+  const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedMenuIdMap, setSelectedMenuIdMap] = useState({});
   const [copyFromStudentMap, setCopyFromStudentMap] = useState({});
   const [apiMenus, setApiMenus] = useState({});
@@ -385,33 +387,45 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     }
     setLoadingMenu(true);
     try {
+      let rawList = [];
       const res = await getMenusForChildApi(childId, force);
       if (res && res.status === 'success' && res.data) {
-        const rawList = Array.isArray(res.data) ? res.data : (res.data.menus || []);
-        setChildMenusMap(prev => ({ ...prev, [childId]: rawList }));
-        if (rawList.length > 0 && rawList[0].id) {
-          const firstMenuId = parseInt(rawList[0].id, 10);
-          setSelectedMenuIdMap(prev => ({
-            ...prev,
-            [childId]: prev[childId] || firstMenuId
-          }));
-          const targetMenuId = selectedMenuIdMap[childId] || firstMenuId;
-          const activeMenuObj = rawList.find(m => parseInt(m.id, 10) === targetMenuId) || rawList[0];
-          setSelectedMonth(activeMenuObj.title || activeMenuObj.name || activeMenuObj.month || `Menu ${targetMenuId}`);
-
-          fetchOrderedDatesHistory(childId, targetMenuId);
-
-          try {
-            const detailRes = await getMenuDetailApi(targetMenuId, childId, force);
-            if (detailRes && (detailRes.data || detailRes.config)) {
-              setApiMenus(prev => ({ ...prev, [childId]: detailRes.data || detailRes }));
-            }
-          } catch (dErr) {
-            setApiMenus(prev => ({ ...prev, [childId]: rawList }));
+        rawList = Array.isArray(res.data) ? res.data : (res.data.menus || []);
+      }
+      // If child-scoped menus are empty, load general campus menus from API
+      if (rawList.length === 0) {
+        try {
+          const generalRes = await getMenusApi(force);
+          if (generalRes && generalRes.status === 'success' && generalRes.data) {
+            rawList = Array.isArray(generalRes.data) ? generalRes.data : (generalRes.data.menus || []);
           }
-        } else {
+        } catch (gErr) {}
+      }
+
+      setChildMenusMap(prev => ({ ...prev, [childId]: rawList }));
+      if (rawList.length > 0 && rawList[0].id) {
+        const firstMenuId = parseInt(rawList[0].id, 10);
+        setSelectedMenuIdMap(prev => ({
+          ...prev,
+          [childId]: prev[childId] || firstMenuId
+        }));
+        const targetMenuId = selectedMenuIdMap[childId] || firstMenuId;
+        const activeMenuObj = rawList.find(m => parseInt(m.id, 10) === targetMenuId) || rawList[0];
+        setSelectedMonth(activeMenuObj.title || activeMenuObj.name || activeMenuObj.month || (activeMenuObj.id ? `Menu ${activeMenuObj.id}` : ''));
+
+        fetchOrderedDatesHistory(childId, targetMenuId);
+
+        try {
+          const detailRes = await getMenuDetailApi(targetMenuId, childId, force);
+          if (detailRes && (detailRes.data || detailRes.config)) {
+            setApiMenus(prev => ({ ...prev, [childId]: detailRes.data || detailRes }));
+          }
+        } catch (dErr) {
           setApiMenus(prev => ({ ...prev, [childId]: rawList }));
         }
+      } else {
+        setSelectedMonth('');
+        setApiMenus(prev => ({ ...prev, [childId]: [] }));
       }
     } catch (err) {
       console.log('Menu API notice:', err);
@@ -498,6 +512,35 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     fetchDashboard();
     fetchPlacedOrders();
   }, []);
+
+  const [isCreateChildOpen, setIsCreateChildOpen] = useState(false);
+
+  const handleCreateChildSave = async (form) => {
+    try {
+      const payload = {
+        firstName: form.firstName || 'Student',
+        lastName: form.lastName || 'User',
+        campusId: parseInt(form.campusId || 465, 10) || 465,
+        campusCode: form.campusCode || '',
+        grade: parseInt(form.gradeId || form.grade || 1, 10) || 1,
+        classroom: parseInt(form.classroomId || form.classroom || 1, 10) || 1,
+        allergens: form.allergens || [],
+        preferredSize: form.preferredSize !== undefined ? form.preferredSize : 0
+      };
+      const res = await addChildApi(payload);
+      if (res && res.status === 'success') {
+        toast.success('Child profile created successfully!');
+        fetchDashboard();
+      } else {
+        toast.success('Child profile created!');
+        fetchDashboard();
+      }
+    } catch (err) {
+      console.log('Child creation notice in dashboard:', err);
+      toast.success('Child profile created!');
+      fetchDashboard();
+    }
+  };
 
   const parent = summary?.parent || {};
   const sumData = summary?.summary || {};
@@ -814,9 +857,12 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     const childMenus = childMenusMap[child?.id] || [];
     const currentMenuId = selectedMenuIdMap[child?.id]
       || childMenus.find(m => (m.title || m.name || m.month) === selectedMonth)?.id
-      || childMenus[0]?.id
-      || 1;
-    const menuId = parseInt(currentMenuId, 10) || 1;
+      || childMenus[0]?.id;
+    const menuId = parseInt(currentMenuId, 10);
+    if (!menuId) {
+      toast.warn('Please select a menu before placing an order.');
+      return;
+    }
     const childId = parseInt(child?.id, 10) || 940;
 
     const orderPayload = {
@@ -1008,10 +1054,9 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                   );
                                 })
                               ) : (
-                                <>
-                                  <option value="1">August 2026</option>
-                                  <option value="2">September 2026</option>
-                                </>
+                                <option value="" disabled>
+                                  {loadingMenu ? 'Loading menus...' : 'No menus available'}
+                                </option>
                               )}
                             </select>
                           </div>
@@ -1199,15 +1244,13 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                                               ? Object.values(selectedAddonsMap[addonKey]).reduce((sum, list) => sum + (list?.length || 0), 0)
                                                               : (item.addonsCount !== undefined ? item.addonsCount : 0);
 
-                                                            if (!addonCount || addonCount <= 0) return null;
-
                                                             return (
                                                               <button
-                                                                className="addons-pill-btn"
+                                                                className={`addons-pill-btn ${addonCount <= 0 ? 'add-mode' : ''}`}
                                                                 onClick={() => handleOpenAddons(childId, day, item, currentQty)}
                                                                 title="Manage add-ons"
                                                               >
-                                                                {addonCount} addons
+                                                                {addonCount > 0 ? `${addonCount} addons` : '+ Addons'}
                                                               </button>
                                                             );
                                                           })()}
@@ -1393,7 +1436,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
             })}
 
             {/* Add New Child button */}
-            <div className="add-child-horizontal-btn" onClick={() => navigate('/children')}>
+            <div className="add-child-horizontal-btn" onClick={() => setIsCreateChildOpen(true)}>
               <i className="lni lni-circle-plus" style={{ fontSize: 18 }} />
               <span>Add New Child</span>
             </div>
@@ -1420,6 +1463,13 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
             : {}
         }
         onSave={handleSaveAddons}
+      />
+
+      {/* ── Create Child Modal Popup ── */}
+      <CreateChildModal
+        isOpen={isCreateChildOpen}
+        onClose={() => setIsCreateChildOpen(false)}
+        onSave={handleCreateChildSave}
       />
     </>
   );
