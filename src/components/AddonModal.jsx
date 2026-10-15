@@ -1,13 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export const DEFAULT_ADDONS = [
-  { id: 'fries', name: 'Fries', price: 2.00 },
-  { id: 'potatoes', name: 'Baked Potatoes', price: 3.00 },
-  { id: 'ranch', name: 'Ranch dressing', price: 1.00 },
-  { id: 'bbq', name: 'BBQ Sauce', price: 1.50 },
-  { id: 'pepsi', name: 'Pepsi', price: 0.50 },
-  { id: 'salad', name: 'Tomato salad', price: 2.50 },
-];
+export const DEFAULT_ADDONS = [];
 
 export default function AddonModal({
   isOpen,
@@ -32,7 +25,7 @@ export default function AddonModal({
   // Parse available addons (supports both item.addons and item.addon from backend)
   const rawList = Array.isArray(item.addons) && item.addons.length > 0
     ? item.addons
-    : (Array.isArray(item.addon) && item.addon.length > 0 ? item.addon : DEFAULT_ADDONS);
+    : (Array.isArray(item.addon) && item.addon.length > 0 ? item.addon : []);
 
   const availableAddons = rawList.map((a, idx) => {
     if (typeof a === 'string') {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { 
@@ -14,12 +14,43 @@ import {
   addChildApi
 } from '../../services/api';
 import { ShimmerStats, ShimmerCards } from '../../components/Shimmer';
-import AddonModal, { DEFAULT_ADDONS } from '../../components/AddonModal';
+import AddonModal from '../../components/AddonModal';
 import CreateChildModal from '../../components/CreateChildModal';
 
 const AVATARS = ['#006D77', '#E29578', '#4A90D9', '#9B59B6', '#F4A261', '#2A9D8F'];
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+// Helper to parse dates without UTC timezone shift (e.g., "YYYY-MM-DD" should stay on that exact date)
+export function parseLocalDate(dateInput) {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) return new Date(dateInput.getTime());
+  const str = String(dateInput).trim();
+  if (!str) return null;
+
+  // Handle YYYY-MM-DD or YYYY/MM/DD without UTC timezone shift
+  const ymdMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10) - 1;
+    const day = parseInt(ymdMatch[3], 10);
+    return new Date(year, month, day, 0, 0, 0, 0);
+  }
+
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Helper to format local date to YYYY-MM-DD without UTC conversion shifts
+export function formatLocalDateToYMD(dateInput) {
+  if (!dateInput) return '';
+  const d = dateInput instanceof Date ? dateInput : parseLocalDate(dateInput);
+  if (!d || isNaN(d.getTime())) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 // Helper to calculate week days dynamically starting from current date onwards
 function getWeekDates(offset = 0) {
@@ -38,6 +69,7 @@ function getWeekDates(offset = 0) {
 
   const monday = new Date(today);
   monday.setDate(today.getDate() + distToMonday + (offset * 7));
+  monday.setHours(0, 0, 0, 0);
 
   const weekDays = [];
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
@@ -60,7 +92,7 @@ function getWeekDates(offset = 0) {
       formattedDate,
       isPast,
       isToday,
-      fullDateStr: dayDate.toISOString().split('T')[0]
+      fullDateStr: formatLocalDateToYMD(dayDate)
     });
   });
 
@@ -112,9 +144,8 @@ export function getMonthGridDays(baseDateOrString) {
     if (baseDateOrString instanceof Date && !isNaN(baseDateOrString)) {
       date = baseDateOrString;
     } else if (typeof baseDateOrString === 'string') {
-      const trimmed = baseDateOrString.trim();
-      const parsed = new Date(trimmed.includes('-') ? trimmed : `1 ${trimmed}`);
-      if (!isNaN(parsed.getTime())) {
+      const parsed = parseLocalDate(baseDateOrString);
+      if (parsed) {
         date = parsed;
       }
     }
@@ -139,19 +170,22 @@ export function getMonthGridDays(baseDateOrString) {
   const grid = [];
   const current = new Date(startMonday);
   const daysOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const todayStr = formatLocalDateToYMD(new Date());
 
   while (current <= lastDay || grid.length % 5 !== 0 || grid.length < 20) {
     const dow = current.getDay();
     if (dow >= 1 && dow <= 5) {
       const isCurrentMonth = current.getMonth() === month;
-      const fullDateStr = current.toISOString().split('T')[0];
+      const fullDateStr = formatLocalDateToYMD(current);
+      const isToday = fullDateStr === todayStr;
       const dateObj = new Date(current);
       grid.push({
         day: current.getDate(),
         dateObj,
         fullDateStr,
         dayName: daysOfWeekNames[dow],
-        isCurrentMonth
+        isCurrentMonth,
+        isToday
       });
     }
 
@@ -211,8 +245,8 @@ function parseApiMenuData(rawData, visibleDays = []) {
         const match = DAYS_OF_WEEK.find(d => d.toLowerCase() === String(item.day).toLowerCase());
         if (match) dayName = match;
       } else if (itemDateStr) {
-        const dateObj = new Date(itemDateStr);
-        if (!isNaN(dateObj.getTime())) {
+        const dateObj = parseLocalDate(itemDateStr);
+        if (dateObj && !isNaN(dateObj.getTime())) {
           const dIdx = dateObj.getDay();
           if (dIdx >= 1 && dIdx <= 5) {
             dayName = DAYS_OF_WEEK[dIdx - 1];
@@ -231,8 +265,13 @@ function parseApiMenuData(rawData, visibleDays = []) {
         isVegan: !!(item.vegan || item.isVegan || item.is_vegan),
         isGlutenFree: !!(item.glutenFree || item.isGlutenFree || item.is_gluten_free),
         isAllergen: !!(item.allergens?.length || item.is_allergen || item.isAllerege || item.isAllergen),
-        addonsCount: Array.isArray(item.addon) ? item.addon.length : (item.addonsCount !== undefined ? item.addonsCount : 0),
-        addons: Array.isArray(item.addon) ? item.addon : (Array.isArray(item.addons) ? item.addons : undefined)
+        addonsCount: Array.isArray(item.addon)
+          ? item.addon.length
+          : (Array.isArray(item.addons) ? item.addons.length : (item.addonsCount !== undefined ? item.addonsCount : 0)),
+        addons: Array.isArray(item.addon) && item.addon.length > 0
+          ? item.addon
+          : (Array.isArray(item.addons) ? item.addons : []),
+        addon: Array.isArray(item.addon) ? item.addon : []
       };
 
       if (result[dayName]) {
@@ -254,6 +293,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
   const [expandedChildId, setExpandedChildId] = useState(null);
   const [menuViewType, setMenuViewType] = useState('Week'); // 'Week' | 'Month'
   const [weekOffset, setWeekOffset] = useState(0); // 0 = current week, 1 = next week
+  const [monthOffset, setMonthOffset] = useState(0); // 0 = current month, 1 = next month, -1 = prev month
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedMenuIdMap, setSelectedMenuIdMap] = useState({});
   const [copyFromStudentMap, setCopyFromStudentMap] = useState({});
@@ -263,64 +303,45 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
   const [addingToCartChildId, setAddingToCartChildId] = useState(null);
   const [childNotes, setChildNotes] = useState({});
 
+  // In-flight guard to prevent multiple concurrent fetches for the same child
+  const fetchingChildRef = useRef(new Set());
+
   // Placed Orders & Ordered Dates History state
   const [placedOrdersMap, setPlacedOrdersMap] = useState({});
   const [orderedDatesHistoryMap, setOrderedDatesHistoryMap] = useState({});
 
-  // Fetch placed orders history from backend API
+  // Fetch placed orders history from backend API without heavy 10-call detail loop
   const fetchPlacedOrders = async () => {
     try {
       const res = await getOrdersApi();
       if (res && res.status === 'success' && Array.isArray(res.data)) {
-        const ordersData = res.data;
-        const detailsPromises = ordersData.slice(0, 10).map(async (o) => {
-          const rawId = o.id || o.orderId;
-          if (!rawId) return null;
-          try {
-            const detailRes = await getOrderDetailsApi(rawId);
-            return {
-              order: o,
-              detail: detailRes?.data || detailRes
-            };
-          } catch (e) {
-            return { order: o, detail: null };
-          }
-        });
-
-        const settled = await Promise.allSettled(detailsPromises);
         const mapByChild = {};
+        res.data.forEach(order => {
+          const childKey = String(order.childId || order.typeId || order.student || order.studentName || 'all').toLowerCase();
+          if (!mapByChild[childKey]) mapByChild[childKey] = {};
+          const orderDateStr = order.orderDate || order.orderOn || order.createdDate;
+          if (orderDateStr) {
+            const orderItems = Array.isArray(order.items) && order.items.length > 0
+              ? order.items.map(it => ({
+                  name: it.name || it.title || it.itemName || 'Meal',
+                  quantity: parseInt(it.quantity, 10) || 1,
+                  price: parseFloat(it.price || 0)
+                }))
+              : [{
+                  name: order.title || order.itemName || order.meal || 'Meal Order',
+                  quantity: 1,
+                  price: parseFloat(order.amount || 0)
+                }];
 
-        settled.forEach(item => {
-          if (item.status === 'fulfilled' && item.value) {
-            const { order, detail } = item.value;
-            const childKey = String(order.childId || order.typeId || order.student || order.studentName || 'all').toLowerCase();
-            if (!mapByChild[childKey]) mapByChild[childKey] = {};
-
-            const orderInfo = detail?.orderInfo || order.orderInfo || order.itemsByDate || {};
-            if (orderInfo && typeof orderInfo === 'object') {
-              Object.keys(orderInfo).forEach(dateKey => {
-                const dateItems = Array.isArray(orderInfo[dateKey]) ? orderInfo[dateKey] : [];
-                if (dateItems.length > 0) {
-                  const items = dateItems.map(it => ({
-                    name: it.name || it.itemName || 'Meal',
-                    quantity: parseInt(it.quantity, 10) || 1,
-                    price: parseFloat(it.unitPrice || it.price || 0)
-                  }));
-                  const totalProducts = items.reduce((sum, it) => sum + it.quantity, 0);
-                  const totalPrice = items.reduce((sum, it) => sum + (it.price * it.quantity), 0);
-                  mapByChild[childKey][dateKey] = {
-                    totalProducts,
-                    totalPrice: totalPrice || parseFloat(order.amount || 0),
-                    items,
-                    orderId: order.orderId || order.id,
-                    status: order.status || 'PAID'
-                  };
-                }
-              });
-            }
+            mapByChild[childKey][orderDateStr] = {
+              totalProducts: orderItems.reduce((s, it) => s + it.quantity, 0),
+              totalPrice: parseFloat(order.amount || 0),
+              orderId: order.orderId || order.id,
+              status: order.status || 'PAID',
+              items: orderItems
+            };
           }
         });
-
         setPlacedOrdersMap(mapByChild);
       }
     } catch (err) {
@@ -360,16 +381,27 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
 
     setLoadingMenu(true);
     try {
-      fetchOrderedDatesHistory(childId, numId);
-      const detailRes = await getMenuDetailApi(numId, childId);
-      if (detailRes && (detailRes.data || detailRes.config)) {
-        const menuData = detailRes.data || detailRes;
+      const [detailRes, dateRes] = await Promise.allSettled([
+        getMenuDetailApi(numId, childId),
+        getOrderedDatesApi(childId, numId)
+      ]);
+
+      if (detailRes.status === 'fulfilled' && detailRes.value && (detailRes.value.data || detailRes.value.config)) {
+        const menuData = detailRes.value.data || detailRes.value;
         setApiMenus(prev => ({ ...prev, [childId]: menuData }));
         setMenuQuantities(prev => ({
           ...prev,
           [childId]: {}
         }));
         toast.info(`Switched to: ${targetMenu?.title || targetMenu?.name || 'Selected Menu'}`);
+      }
+
+      if (dateRes.status === 'fulfilled' && dateRes.value) {
+        const dates = dateRes.value.orderedDates || dateRes.value.data?.orderedDates || [];
+        setOrderedDatesHistoryMap(prev => ({
+          ...prev,
+          [childId]: dates
+        }));
       }
     } catch (err) {
       console.error('Failed to load menu detail on menu switch:', err);
@@ -382,10 +414,19 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
   // Fetch API menus for active child (cached so it only fetches once per child)
   const fetchMenuForChild = async (childId, force = false) => {
     if (childId === null || childId === undefined) return;
+
+    // Return immediately if data is already present in state and not forced
     if (!force && childMenusMap[childId] && apiMenus[childId]) {
       return;
     }
+
+    // In-flight guard: prevent multiple parallel requests for the same child
+    if (fetchingChildRef.current.has(childId)) {
+      return;
+    }
+    fetchingChildRef.current.add(childId);
     setLoadingMenu(true);
+
     try {
       let rawList = [];
       const res = await getMenusForChildApi(childId, force);
@@ -403,6 +444,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
       }
 
       setChildMenusMap(prev => ({ ...prev, [childId]: rawList }));
+
       if (rawList.length > 0 && rawList[0].id) {
         const firstMenuId = parseInt(rawList[0].id, 10);
         setSelectedMenuIdMap(prev => ({
@@ -413,15 +455,24 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
         const activeMenuObj = rawList.find(m => parseInt(m.id, 10) === targetMenuId) || rawList[0];
         setSelectedMonth(activeMenuObj.title || activeMenuObj.name || activeMenuObj.month || (activeMenuObj.id ? `Menu ${activeMenuObj.id}` : ''));
 
-        fetchOrderedDatesHistory(childId, targetMenuId);
+        // Fetch detail and ordered dates in parallel in one shot
+        const [detailRes, dateRes] = await Promise.allSettled([
+          getMenuDetailApi(targetMenuId, childId, force),
+          getOrderedDatesApi(childId, targetMenuId)
+        ]);
 
-        try {
-          const detailRes = await getMenuDetailApi(targetMenuId, childId, force);
-          if (detailRes && (detailRes.data || detailRes.config)) {
-            setApiMenus(prev => ({ ...prev, [childId]: detailRes.data || detailRes }));
-          }
-        } catch (dErr) {
+        if (detailRes.status === 'fulfilled' && detailRes.value && (detailRes.value.data || detailRes.value.config)) {
+          setApiMenus(prev => ({ ...prev, [childId]: detailRes.value.data || detailRes.value }));
+        } else {
           setApiMenus(prev => ({ ...prev, [childId]: rawList }));
+        }
+
+        if (dateRes.status === 'fulfilled' && dateRes.value) {
+          const dates = dateRes.value.orderedDates || dateRes.value.data?.orderedDates || [];
+          setOrderedDatesHistoryMap(prev => ({
+            ...prev,
+            [childId]: dates
+          }));
         }
       } else {
         setSelectedMonth('');
@@ -430,15 +481,19 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     } catch (err) {
       console.log('Menu API notice:', err);
     } finally {
+      fetchingChildRef.current.delete(childId);
       setLoadingMenu(false);
     }
   };
 
+  // Only run when expandedChildId changes (opening an accordion), NOT when childMenusMap or apiMenus changes
   useEffect(() => {
-    if (expandedChildId !== null && (!childMenusMap[expandedChildId] || !apiMenus[expandedChildId])) {
-      fetchMenuForChild(expandedChildId);
+    if (expandedChildId !== null && expandedChildId !== undefined) {
+      if (!childMenusMap[expandedChildId] || !apiMenus[expandedChildId]) {
+        fetchMenuForChild(expandedChildId);
+      }
     }
-  }, [expandedChildId, childMenusMap, apiMenus]);
+  }, [expandedChildId]);
 
   // Quantities state: childId -> day -> itemId -> qty
   const [menuQuantities, setMenuQuantities] = useState({});
@@ -555,6 +610,19 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
       const dayData = childData[day] ? { ...childData[day] } : {};
       const currentQty = dayData[itemId] || 0;
       const nextQty = Math.max(0, currentQty + delta);
+
+      if (nextQty === 0) {
+        const addonKey = `${cid}_${day}_${itemId}`;
+        setSelectedAddonsMap(prevAddons => {
+          if (prevAddons[addonKey]) {
+            const nextAddons = { ...prevAddons };
+            delete nextAddons[addonKey];
+            return nextAddons;
+          }
+          return prevAddons;
+        });
+      }
+
       return {
         ...prev,
         [cid]: {
@@ -566,6 +634,26 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
         }
       };
     });
+  };
+
+  // Check if item has add-ons available
+  const isItemAddonAvailable = (item) => {
+    if (!item) return false;
+    if (Array.isArray(item.addons) && item.addons.length > 0) return true;
+    if (Array.isArray(item.addon) && item.addon.length > 0) return true;
+    if (typeof item.addonsCount === 'number' && item.addonsCount > 0) return true;
+    if (item.hasAddon || item.hasAddons) return true;
+    return false;
+  };
+
+  // Plus button click: increments quantity and automatically opens addon window if addons are available
+  const handlePlusClick = (childId, day, item, currentQty) => {
+    const nextQty = (currentQty || 0) + 1;
+    updateQty(childId, day, item.id, 1);
+
+    if (isItemAddonAvailable(item)) {
+      handleOpenAddons(childId, day, item, nextQty);
+    }
   };
 
   const handleOpenWeekForDay = (targetDate) => {
@@ -592,28 +680,43 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
 
     const dateMatchesCell = (d) => {
       if (!d) return false;
-      if (d === cellDateStr) return true;
-      const parsed = new Date(d);
-      if (!isNaN(parsed.getTime())) {
+      const strD = String(d).trim();
+      if (cellDateStr && strD.startsWith(cellDateStr)) return true;
+      const parsed = parseLocalDate(strD);
+      if (parsed && !isNaN(parsed.getTime())) {
         if (parsed.getFullYear() === cellYear && parsed.getMonth() === cellMonth && parsed.getDate() === cellDay) {
           return true;
         }
       }
       const formattedCheck = `${String(cellDay).padStart(2, '0')} ${cell.dateObj.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}`;
-      if (String(d).toUpperCase().includes(formattedCheck)) return true;
+      if (strD.toUpperCase().includes(formattedCheck)) return true;
       return false;
     };
 
     // 1. Placed orders from backend API
     const childOrders = placedOrdersMap[String(childId).toLowerCase()] || placedOrdersMap[studentName] || {};
     for (const [dateKey, orderData] of Object.entries(childOrders)) {
-      if (dateMatchesCell(dateKey)) return orderData;
+      if (dateMatchesCell(dateKey)) {
+        return {
+          ...orderData,
+          items: Array.isArray(orderData.items) && orderData.items.length > 0
+            ? orderData.items
+            : [{ name: 'Meal Order', quantity: orderData.totalProducts || 1, price: orderData.totalPrice || 0 }]
+        };
+      }
     }
 
     for (const [cKey, oMap] of Object.entries(placedOrdersMap)) {
       if (!studentName || cKey.includes(studentName) || studentName.includes(cKey)) {
         for (const [dKey, oData] of Object.entries(oMap)) {
-          if (dateMatchesCell(dKey)) return oData;
+          if (dateMatchesCell(dKey)) {
+            return {
+              ...oData,
+              items: Array.isArray(oData.items) && oData.items.length > 0
+                ? oData.items
+                : [{ name: 'Meal Order', quantity: oData.totalProducts || 1, price: oData.totalPrice || 0 }]
+            };
+          }
         }
       }
     }
@@ -797,7 +900,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
       let dateStr = dayData?.fullDateStr;
       if (!dateStr) {
         const matchedWeekDay = weekDays.find(w => w.dayName.toLowerCase() === day.toLowerCase());
-        dateStr = matchedWeekDay?.fullDateStr || new Date().toISOString().split('T')[0];
+        dateStr = matchedWeekDay?.fullDateStr || formatLocalDateToYMD(new Date());
       }
 
       const dayItems = [];
@@ -829,9 +932,13 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
             addon: addonList
           });
 
+          const itemAddonList = Array.isArray(itemDetails?.addons) && itemDetails.addons.length > 0
+            ? itemDetails.addons
+            : (Array.isArray(itemDetails?.addon) && itemDetails.addon.length > 0 ? itemDetails.addon : []);
+
           const addonNames = flatAddonIds.map(aid => {
-            const def = DEFAULT_ADDONS.find(a => String(a.id) === String(aid));
-            return def ? def.name : aid;
+            const found = itemAddonList.find(a => String(a.id) === String(aid));
+            return found ? (found.name || found.title || aid) : aid;
           });
 
           itemsToSync.push({
@@ -1078,7 +1185,10 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                             </button>
                             <button
                               className={menuViewType === 'Month' ? 'active' : ''}
-                              onClick={() => setMenuViewType('Month')}
+                              onClick={() => {
+                                setMenuViewType('Month');
+                                setMonthOffset(0);
+                              }}
                             >
                               Month
                             </button>
@@ -1233,16 +1343,21 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                                           <div className="accordion-qty-box">
                                                             <button className="accordion-qty-btn" onClick={() => updateQty(childId, day, item.id, -1)}>-</button>
                                                             <span className="accordion-qty-val">{currentQty}</span>
-                                                            <button className="accordion-qty-btn" onClick={() => updateQty(childId, day, item.id, 1)}>+</button>
+                                                            <button className="accordion-qty-btn" onClick={() => handlePlusClick(childId, day, item, currentQty)}>+</button>
                                                           </div>
 
                                                           {/* Addons Pill Button */}
                                                           {(() => {
+                                                            const hasAddons = isItemAddonAvailable(item);
                                                             const addonKey = `${childId}_${day}_${item.id}`;
                                                             const hasSelections = selectedAddonsMap[addonKey] !== undefined;
+
+                                                            // Only show addon pill if item actually has addons available or selections exist
+                                                            if (!hasAddons && !hasSelections) return null;
+
                                                             const addonCount = hasSelections
                                                               ? Object.values(selectedAddonsMap[addonKey]).reduce((sum, list) => sum + (list?.length || 0), 0)
-                                                              : (item.addonsCount !== undefined ? item.addonsCount : 0);
+                                                              : (item.addonsCount !== undefined ? item.addonsCount : (item.addons?.length || item.addon?.length || 0));
 
                                                             return (
                                                               <button
@@ -1283,10 +1398,11 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                         );
                       })() : (
                         (() => {
-                          const childMenus = childMenusMap[childId] || [];
-                          const activeChildMenu = childMenus.find(m => parseInt(m.id, 10) === selectedMenuIdMap[childId]) || childMenus[0];
-                          const baseMonthDate = activeChildMenu?.startDate || selectedMonth || new Date();
+                          const baseMonthDate = new Date();
+                          baseMonthDate.setDate(1);
+                          baseMonthDate.setMonth(baseMonthDate.getMonth() + monthOffset);
                           const monthGridDays = getMonthGridDays(baseMonthDate);
+                          const monthDisplayTitle = baseMonthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }).toUpperCase();
 
                           return (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1298,10 +1414,34 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                 padding: '0 4px',
                                 marginBottom: 2
                               }}>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
-                                  <i className="lni lni-calendar" style={{ marginRight: 6, color: '#006D77' }} />
-                                  Click any day's cart icon to open that week
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                  <button
+                                    className="carousel-nav-btn"
+                                    onClick={() => setMonthOffset(prev => prev - 1)}
+                                    title="Previous Month"
+                                    style={{ width: 30, height: 30, fontSize: 13 }}
+                                  >
+                                    <i className="lni lni-chevron-left" />
+                                  </button>
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: '#006D77', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <i className="lni lni-calendar" />
+                                    {monthDisplayTitle}
+                                    {monthOffset === 0 && (
+                                      <span style={{ fontSize: 10, background: '#006D77', color: '#fff', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
+                                        CURRENT MONTH
+                                      </span>
+                                    )}
+                                  </span>
+                                  <button
+                                    className="carousel-nav-btn"
+                                    onClick={() => setMonthOffset(prev => prev + 1)}
+                                    title="Next Month"
+                                    style={{ width: 30, height: 30, fontSize: 13 }}
+                                  >
+                                    <i className="lni lni-chevron-right" />
+                                  </button>
                                 </div>
+
                                 <button
                                   className="btn-first-item-all"
                                   onClick={() => handleFirstItemAllDays(childId)}
@@ -1318,7 +1458,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
 
                                 {monthGridDays.map((cell, idx) => {
                                   const orderInfo = getOrderForCell(child, childId, cell);
-                                  const dayQty = orderInfo ? orderInfo.totalProducts : Object.values(childQuantities[cell.dayName] || {}).reduce((sum, q) => sum + (q || 0), 0);
+                                  const dayQty = orderInfo ? orderInfo.totalProducts : 0;
 
                                   return (
                                     <div 
@@ -1328,7 +1468,16 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                       title={orderInfo ? `Click to edit order for ${cell.dayName}, ${cell.fullDateStr}` : `Click to open week containing ${cell.dayName}, ${cell.fullDateStr}`}
                                     >
                                       <div className={`month-day-cell-top ${orderInfo ? 'has-order' : ''}`}>
-                                        <span className="month-day-number">{cell.day}</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                          <span className="month-day-number" style={{ color: cell.isToday ? '#006D77' : undefined, fontWeight: cell.isToday ? 800 : undefined }}>
+                                            {cell.day}
+                                          </span>
+                                          {cell.isToday && (
+                                            <span style={{ fontSize: 9, background: '#006D77', color: '#fff', padding: '1px 4px', borderRadius: 3, fontWeight: 700 }}>
+                                              TODAY
+                                            </span>
+                                          )}
+                                        </div>
                                         {!orderInfo && (
                                           <button
                                             type="button"
@@ -1371,7 +1520,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                           </div>
 
                                           <div className="month-order-item-list">
-                                            {orderInfo.items.map((it, i) => (
+                                            {(orderInfo?.items || []).map((it, i) => (
                                               <div key={i} className="month-order-item-row">
                                                 <span className="month-order-item-qty">{it.quantity}x</span>
                                                 <span className="month-order-item-name">{it.name}</span>

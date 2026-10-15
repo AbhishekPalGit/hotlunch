@@ -58,6 +58,25 @@ api.interceptors.response.use(
 );
 
 /* ==========================================================================
+   REQUEST DEDUPLICATION (prevents duplicate simultaneous network requests)
+   ========================================================================== */
+const inFlightRequests = new Map();
+
+export const dedupeGet = async (url, config) => {
+  const key = config && Object.keys(config).length > 0 ? `${url}_${JSON.stringify(config)}` : url;
+  if (inFlightRequests.has(key)) {
+    return inFlightRequests.get(key);
+  }
+  const promise = api.get(url, config)
+    .then(res => res.data)
+    .finally(() => {
+      inFlightRequests.delete(key);
+    });
+  inFlightRequests.set(key, promise);
+  return promise;
+};
+
+/* ==========================================================================
    AUTHENTICATION & PROFILE APIs
    ========================================================================== */
 export const loginApi = async ({ login, password, remember = 0 }) => {
@@ -136,9 +155,8 @@ export const deleteChildApi = async (childId) => {
 /* ==========================================================================
    ORDERS & CART APIs
    ========================================================================== */
-export const getOrdersApi = async () => {
-  const response = await api.get('api/v1/orders');
-  return response.data;
+export const getOrdersApi = async (params) => {
+  return dedupeGet('api/v1/orders', params ? { params } : undefined);
 };
 
 export const getOrderDetailsApi = async (orderId) => {
@@ -152,8 +170,7 @@ export const cancelOrderApi = async (orderId) => {
 };
 
 export const getCartApi = async () => {
-  const response = await api.get('api/v1/orders/cart');
-  return response.data;
+  return dedupeGet('api/v1/orders/cart');
 };
 
 export const deleteCartItemApi = async (orderId) => {
@@ -205,8 +222,7 @@ export const topupCreditApi = async (data) => {
    DASHBOARD APIs
    ========================================================================== */
 export const getDashboardSummaryApi = async () => {
-  const response = await api.get('api/v1/dashboard/summary');
-  return response.data;
+  return dedupeGet('api/v1/dashboard/summary');
 };
 
 /* ==========================================================================
@@ -223,9 +239,9 @@ export const getMenusApi = async (forceRefresh = false) => {
   if (!forceRefresh && menusCache.has(cacheKey)) {
     return menusCache.get(cacheKey);
   }
-  const response = await api.get('api/v1/menus');
-  menusCache.set(cacheKey, response.data);
-  return response.data;
+  const data = await dedupeGet('api/v1/menus');
+  menusCache.set(cacheKey, data);
+  return data;
 };
 
 export const getMenusForChildApi = async (childId, forceRefresh = false) => {
@@ -233,9 +249,9 @@ export const getMenusForChildApi = async (childId, forceRefresh = false) => {
   if (!forceRefresh && menusCache.has(cacheKey)) {
     return menusCache.get(cacheKey);
   }
-  const response = await api.get(`api/v1/menus?childId=${childId}`);
-  menusCache.set(cacheKey, response.data);
-  return response.data;
+  const data = await dedupeGet(`api/v1/menus?childId=${childId}`);
+  menusCache.set(cacheKey, data);
+  return data;
 };
 
 export const getMenuDetailApi = async (menuId, childId, forceRefresh = false) => {
@@ -243,14 +259,13 @@ export const getMenuDetailApi = async (menuId, childId, forceRefresh = false) =>
   if (!forceRefresh && menusCache.has(cacheKey)) {
     return menusCache.get(cacheKey);
   }
-  const response = await api.get(`api/v1/menus/${menuId}?childId=${childId}`);
-  menusCache.set(cacheKey, response.data);
-  return response.data;
+  const data = await dedupeGet(`api/v1/menus/${menuId}?childId=${childId}`);
+  menusCache.set(cacheKey, data);
+  return data;
 };
 
 export const getOrderedDatesApi = async (childId, menuId) => {
-  const response = await api.get(`api/v1/orders/date-history?childId=${childId}&menuId=${menuId}`);
-  return response.data;
+  return dedupeGet(`api/v1/orders/date-history?childId=${childId}&menuId=${menuId}`);
 };
 
 /* ==========================================================================

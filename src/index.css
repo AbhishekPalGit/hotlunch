@@ -1015,7 +1015,7 @@ body,
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-height: 480px;
+  height: 490px;
 }
 
 .weekly-day-header {
@@ -1025,6 +1025,7 @@ body,
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid #FED7AA;
+  flex-shrink: 0;
 }
 
 .weekly-day-header .day-date {
@@ -1047,6 +1048,27 @@ body,
   flex-direction: column;
   gap: 10px;
   flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #CBD5E1 transparent;
+}
+
+.weekly-day-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.weekly-day-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.weekly-day-body::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+
+.weekly-day-body::-webkit-scrollbar-thumb:hover {
+  background: #006D77;
 }
 
 /* Accordion Food Item Card */
