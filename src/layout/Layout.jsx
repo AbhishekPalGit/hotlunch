@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import CartHoverPopup from '../components/CartHoverPopup';
@@ -44,6 +44,7 @@ function AddFundsModal({ onClose, setAvailableFunds }) {
 const Layout = ({ cartItems = [], cartCount = 0, cartTotal = 0, availableFunds = 0, amountOwed = 0, userName = '', setAvailableFunds, setAmountOwed, onSignOut }) => {
   const navigate = useNavigate();
   const [showAddFunds, setShowAddFunds] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isCartHovered, setIsCartHovered] = useState(false);
   const hoverTimeoutRef = useRef(null);
@@ -66,16 +67,39 @@ const Layout = ({ cartItems = [], cartCount = 0, cartTotal = 0, availableFunds =
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const initials = userName ? userName.split(' ').map(n => n[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) : 'U';
+  const displayUserName = userName || (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('user_details') || '{}');
+      return saved.name || saved.fullName || `${saved.firstName || ''} ${saved.lastName || ''}`.trim() || 'Parent';
+    } catch {
+      return 'Parent';
+    }
+  })();
+  const initials = displayUserName ? displayUserName.split(' ').map(n => n[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) : 'U';
 
   const handlePayNow = () => navigate('/checkout');
-  const handleSignOut = () => {
+  const handleOpenLogoutModal = () => {
+    setShowLogoutModal(true);
+  };
+  const handleConfirmSignOut = () => {
+    setShowLogoutModal(false);
     toast.info('Signed out');
     if (onSignOut) {
       onSignOut();
     }
     navigate('/login');
   };
+
+  useEffect(() => {
+    if (!showLogoutModal) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowLogoutModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showLogoutModal]);
 
   return (
     <div className="app-layout">
@@ -125,7 +149,7 @@ const Layout = ({ cartItems = [], cartCount = 0, cartTotal = 0, availableFunds =
 
         {/* Bottom Sign Out */}
         <div className="sidebar-bottom">
-          <button className="signout-btn" onClick={handleSignOut}>
+          <button className="signout-btn" onClick={handleOpenLogoutModal}>
             <i className="lni lni-exit nav-icon" />
             <span>Sign Out</span>
           </button>
@@ -156,7 +180,7 @@ const Layout = ({ cartItems = [], cartCount = 0, cartTotal = 0, availableFunds =
           <div className="user-welcome">
             <div className="user-avatar">{initials}</div>
             <div className="welcome-text">
-              <div className="name">Welcome back, {userName}!</div>
+              <div className="name">Welcome back, {displayUserName}!</div>
               <div className="date">{dateStr} {timeStr}</div>
             </div>
           </div>
@@ -213,6 +237,85 @@ const Layout = ({ cartItems = [], cartCount = 0, cartTotal = 0, availableFunds =
       {/* Add Funds Modal */}
       {showAddFunds && (
         <AddFundsModal onClose={() => setShowAddFunds(false)} setAvailableFunds={setAvailableFunds} />
+      )}
+
+      {/* Logout Confirmation Modal with 72h Cart Deletion Notice */}
+      {showLogoutModal && (
+        <div className="modal-overlay logout-modal-overlay" onClick={() => setShowLogoutModal(false)}>
+          <div className="logout-modal-box" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="logout-modal-title">
+            <div className="logout-modal-header">
+              <div className="logout-icon-bubble">
+                <i className="lni lni-exit" />
+              </div>
+              <button 
+                type="button"
+                className="logout-modal-close-btn" 
+                onClick={() => setShowLogoutModal(false)}
+                aria-label="Close"
+              >
+                <i className="lni lni-close" />
+              </button>
+            </div>
+
+            <h3 id="logout-modal-title" className="logout-modal-title">Confirm Sign Out</h3>
+            <p className="logout-modal-subtitle">
+              Are you sure you want to sign out of your account?
+            </p>
+
+            {/* 72-Hour Cart Expiration Reminder */}
+            <div className="logout-modal-warning-card">
+              <div className="logout-warning-icon">
+                <i className="lni lni-alarm" />
+              </div>
+              <div className="logout-warning-content">
+                <div className="logout-warning-heading">Cart Policy Reminder</div>
+                <div className="logout-warning-text">
+                  Any unpaid items in your cart will be <strong>automatically deleted within 72 hours</strong> if not paid.
+                </div>
+                {effectiveCartCount > 0 && (
+                  <div className="logout-cart-pill-wrap">
+                    <span className="logout-cart-pill">
+                      <i className="lni lni-cart" /> {effectiveCartCount} unpaid item{effectiveCartCount > 1 ? 's' : ''} (${(parseFloat(effectiveCartTotal) || 0).toFixed(2)})
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="logout-modal-actions">
+              <button 
+                type="button"
+                className="logout-btn-cancel" 
+                onClick={() => setShowLogoutModal(false)}
+              >
+                Cancel
+              </button>
+
+              {effectiveCartCount > 0 && (
+                <button 
+                  type="button"
+                  className="logout-btn-review" 
+                  onClick={() => {
+                    setShowLogoutModal(false);
+                    navigate('/shoppingcart');
+                  }}
+                >
+                  <i className="lni lni-cart" />
+                  Review Cart
+                </button>
+              )}
+
+              <button 
+                type="button"
+                className="logout-btn-confirm" 
+                onClick={handleConfirmSignOut}
+              >
+                <i className="lni lni-exit" />
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

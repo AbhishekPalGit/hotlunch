@@ -121,6 +121,63 @@ export const ShimmerCart = () => (
   </div>
 );
 
+/* ── Shopping Cart Table Shimmer (No Summary Card) ────────────────── */
+export const ShimmerCartTable = ({ rows = 5 }) => (
+  <div className="cart-table-container">
+    <table className="cart-data-table">
+      <thead>
+        <tr>
+          <th style={{ width: 44, textAlign: 'center' }}>
+            <ShimmerBlock width={16} height={16} style={{ borderRadius: 4, margin: '0 auto' }} />
+          </th>
+          <th>ORDER ID</th>
+          <th>STUDENT</th>
+          <th>MENU</th>
+          <th>CAMPUS</th>
+          <th>AMOUNT</th>
+          <th>CREATED ON</th>
+          <th style={{ width: 150 }}></th>
+        </tr>
+      </thead>
+      <tbody>
+        {Array.from({ length: rows }).map((_, r) => (
+          <tr key={r}>
+            <td style={{ textAlign: 'center' }}>
+              <ShimmerBlock width={16} height={16} style={{ borderRadius: 4, margin: '0 auto' }} />
+            </td>
+            <td>
+              <ShimmerBlock width={36} height={14} />
+            </td>
+            <td>
+              <ShimmerBlock width={120} height={14} />
+            </td>
+            <td>
+              <ShimmerBlock width={100} height={14} />
+            </td>
+            <td>
+              <ShimmerBlock width={45} height={14} />
+            </td>
+            <td>
+              <ShimmerBlock width={55} height={14} />
+            </td>
+            <td>
+              <ShimmerBlock width={130} height={14} />
+            </td>
+            <td>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <ShimmerBlock width={28} height={28} className="shimmer-circle" />
+                <ShimmerBlock width={28} height={28} className="shimmer-circle" />
+                <ShimmerBlock width={28} height={28} className="shimmer-circle" />
+                <ShimmerBlock width={28} height={28} className="shimmer-circle" />
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
 /* ── Lunch-card preview ──────────────────────────────────────────── */
 export const ShimmerLunchCards = ({ count = 6, twoCol = true }) => (
   <div className="card">

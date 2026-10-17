@@ -12,121 +12,6 @@ import {
 } from '../../services/api';
 import { ShimmerCart } from '../../components/Shimmer';
 
-// Default mock orders to match user's mockup when database has 0 draft orders
-const DEFAULT_MOCK_ORDERS = [
-  {
-    orderId: 4067283,
-    orderNumber: '#4067283',
-    createdDate: '11 Aug, 2023',
-    childName: 'John Doe',
-    amount: 45.00,
-    dates: [
-      {
-        date: 'Monday, 28 Aug, 23',
-        items: [
-          { name: 'STRAWBERRY JUICE - REGULAR', unitPrice: 0.25, quantity: 1, total: 0.25 }
-        ]
-      },
-      {
-        date: 'Tuesday, 29 Aug, 23',
-        items: [
-          { name: 'BAKED POTATO WITH VEGGIES (GLUTEN FREE) - REGULAR', unitPrice: 0.00, quantity: 1, total: 0.00 }
-        ]
-      }
-    ],
-    orderAmount: 5.25,
-    salesTax: 0.53,
-    schoolFees: 0.00,
-    lateFees: 0.00,
-    grandTotal: 5.78
-  },
-  {
-    orderId: 4067284,
-    orderNumber: '#4067283',
-    createdDate: '11 Aug, 2023',
-    childName: 'John Doe',
-    amount: 45.00,
-    dates: [
-      {
-        date: 'Monday, 28 Aug, 23',
-        items: [
-          { name: 'STRAWBERRY JUICE - REGULAR', unitPrice: 0.25, quantity: 1, total: 0.25 }
-        ]
-      },
-      {
-        date: 'Tuesday, 29 Aug, 23',
-        items: [
-          { name: 'BAKED POTATO WITH VEGGIES (GLUTEN FREE) - REGULAR', unitPrice: 0.00, quantity: 1, total: 0.00 }
-        ]
-      }
-    ],
-    orderAmount: 5.25,
-    salesTax: 0.53,
-    schoolFees: 0.00,
-    lateFees: 0.00,
-    grandTotal: 5.78
-  },
-  {
-    orderId: 4067285,
-    orderNumber: '#4067283',
-    createdDate: '11 Aug, 2023',
-    childName: 'John Doe',
-    amount: 45.00,
-    dates: [
-      {
-        date: 'Monday, 28 Aug, 23',
-        items: [
-          { name: 'STRAWBERRY JUICE - REGULAR', unitPrice: 0.25, quantity: 1, total: 0.25 }
-        ]
-      }
-    ],
-    orderAmount: 5.25,
-    salesTax: 0.53,
-    schoolFees: 0.00,
-    lateFees: 0.00,
-    grandTotal: 5.78
-  },
-  {
-    orderId: 4067286,
-    orderNumber: '#4067283',
-    createdDate: '11 Aug, 2023',
-    childName: 'John Doe',
-    amount: 45.00,
-    dates: [],
-    orderAmount: 5.25,
-    salesTax: 0.53,
-    schoolFees: 0.00,
-    lateFees: 0.00,
-    grandTotal: 5.78
-  },
-  {
-    orderId: 4067287,
-    orderNumber: '#4067283',
-    createdDate: '11 Aug, 2023',
-    childName: 'John Doe',
-    amount: 45.00,
-    dates: [],
-    orderAmount: 5.25,
-    salesTax: 0.53,
-    schoolFees: 0.00,
-    lateFees: 0.00,
-    grandTotal: 5.78
-  },
-  {
-    orderId: 4067288,
-    orderNumber: '#4067283',
-    createdDate: '11 Aug, 2023',
-    childName: 'John Doe',
-    amount: 45.00,
-    dates: [],
-    orderAmount: 5.25,
-    salesTax: 0.53,
-    schoolFees: 0.00,
-    lateFees: 0.00,
-    grandTotal: 5.78
-  }
-];
-
 const PAYMENT_METHODS_OPTIONS = [
   // Column 1
   'Use Available Credit',
@@ -148,7 +33,7 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
 
   const [childrenList, setChildrenList] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [expandedOrderIds, setExpandedOrderIds] = useState([4067284]); // Default 2nd order expanded
+  const [expandedOrderIds, setExpandedOrderIds] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
@@ -162,6 +47,10 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
   const [showTopupModal, setShowTopupModal] = useState(false);
   const [topupAmount, setTopupAmount] = useState('');
   const [topupLoading, setTopupLoading] = useState(false);
+
+  // Delete Confirmation Modal
+  const [deleteModal, setDeleteModal] = useState({ isOpen: false, order: null });
+  const [deleting, setDeleting] = useState(false);
 
   // Load children for real student name resolution
   useEffect(() => {
@@ -177,12 +66,12 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
   const resolveChildName = (childId, fallbackName) => {
     const found = (childrenList || []).find(c => c && String(c.id) === String(childId));
     if (found) {
-      return found.fullName || `${found.firstName || ''} ${found.lastName || ''}`.trim() || found.name || 'John Doe';
+      return found.fullName || `${found.firstName || ''} ${found.lastName || ''}`.trim() || found.name || 'Student';
     }
     if (fallbackName && !String(fallbackName).startsWith('Child #')) {
       return fallbackName;
     }
-    return fallbackName || 'John Doe';
+    return fallbackName || 'Student';
   };
 
   /* ── Load Cart Orders ── */
@@ -200,43 +89,73 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
           ? rawGroups.filter(g => g.orderId && stateOrderIds.includes(parseInt(g.orderId, 10)))
           : rawGroups;
 
+        if (filteredGroups.length === 0) {
+          setOrders([]);
+          setSummary(null);
+          return;
+        }
+
         const mappedOrders = filteredGroups.map((g, idx) => {
-          const oId = g.orderId || (4067280 + idx);
+          const oId = g.orderId || g.id || (idx + 1);
           const cName = resolveChildName(g.childId || g.typeId, g.childName || g.studentName);
-          
-          let dateStr = '11 Aug, 2023';
+
+          let dateStr = '';
           if (g.createdDate) {
             try {
               const d = new Date(g.createdDate);
               dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
             } catch (e) {
-              dateStr = g.createdDate;
+              dateStr = String(g.createdDate);
             }
+          } else {
+            dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
           }
 
           let dateSections = [];
           if (Array.isArray(g.dates) && g.dates.length > 0) {
             dateSections = g.dates.map(ds => ({
-              date: ds.date || ds.displayDate || 'Meal Date',
-              items: (ds.items || []).map(it => ({
-                name: (it.name || it.itemName || 'Meal Item').toUpperCase(),
-                unitPrice: parseFloat(it.price || it.unitPrice || 0),
-                quantity: parseInt(it.quantity, 10) || 1,
-                total: parseFloat(it.total || (it.price * (it.quantity || 1)) || 0)
-              }))
+              date: ds.displayDate || ds.date || 'Meal Date',
+              items: (ds.items || []).flatMap(it => {
+                const mainItem = {
+                  name: (it.name || it.itemName || 'Meal Item').toUpperCase(),
+                  unitPrice: parseFloat(it.price || it.unitPrice || 0),
+                  quantity: parseInt(it.quantity, 10) || 1,
+                  total: parseFloat(it.total ?? (parseFloat(it.price || 0) * (parseInt(it.quantity, 10) || 1)))
+                };
+                const addonItems = Array.isArray(it.addons) ? it.addons.map(ad => ({
+                  name: `+ ${ad.name || ad.itemName || 'Addon'}`.toUpperCase(),
+                  unitPrice: parseFloat(ad.price || ad.unitPrice || 0),
+                  quantity: parseInt(ad.quantity, 10) || 1,
+                  total: parseFloat(ad.total ?? (parseFloat(ad.price || 0) * (parseInt(ad.quantity, 10) || 1)))
+                })) : [];
+                return [mainItem, ...addonItems];
+              })
             }));
           } else if (Array.isArray(g.items) && g.items.length > 0) {
-            // Group flat items by date
             const groupedByDate = {};
             g.items.forEach(it => {
               const dKey = it.orderDate || it.date || 'Meal Date';
               if (!groupedByDate[dKey]) groupedByDate[dKey] = [];
+              const mainQty = parseInt(it.quantity, 10) || 1;
+              const mainPrice = parseFloat(it.price || 0);
               groupedByDate[dKey].push({
                 name: (it.name || it.itemName || 'Meal Item').toUpperCase(),
-                unitPrice: parseFloat(it.price || 0),
-                quantity: parseInt(it.quantity, 10) || 1,
-                total: parseFloat(it.price || 0) * (parseInt(it.quantity, 10) || 1)
+                unitPrice: mainPrice,
+                quantity: mainQty,
+                total: parseFloat(it.total ?? (mainPrice * mainQty))
               });
+              if (Array.isArray(it.addons)) {
+                it.addons.forEach(ad => {
+                  const adQty = parseInt(ad.quantity, 10) || 1;
+                  const adPrice = parseFloat(ad.price || 0);
+                  groupedByDate[dKey].push({
+                    name: `+ ${ad.name || ad.itemName || 'Addon'}`.toUpperCase(),
+                    unitPrice: adPrice,
+                    quantity: adQty,
+                    total: parseFloat(ad.total ?? (adPrice * adQty))
+                  });
+                });
+              }
             });
             dateSections = Object.entries(groupedByDate).map(([dt, its]) => ({
               date: dt,
@@ -244,24 +163,26 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
             }));
           }
 
-          const oSubtotal = dateSections.reduce((sum, ds) => 
-            sum + ds.items.reduce((iSum, it) => iSum + it.total, 0), 0
-          ) || parseFloat(g.amount || 5.25);
-
-          const oTax = parseFloat((oSubtotal * 0.1).toFixed(2));
-          const oGrandTotal = parseFloat((oSubtotal + oTax).toFixed(2));
+          const computedItemsTotal = dateSections.reduce((sum, ds) => 
+            sum + ds.items.reduce((iSum, it) => iSum + (it.total || 0), 0), 0
+          );
+          const oSubtotal = parseFloat(g.amount) > 0 ? parseFloat(g.amount) : computedItemsTotal;
+          const oTax = parseFloat(g.salesTax ?? g.tax ?? 0);
+          const oSchoolFee = parseFloat(g.schoolFees ?? g.schoolFee ?? 0);
+          const oLateFee = parseFloat(g.lateFees ?? g.lateFee ?? 0);
+          const oGrandTotal = parseFloat((oSubtotal + oTax + oSchoolFee + oLateFee).toFixed(2));
 
           return {
             orderId: oId,
             orderNumber: `#${oId}`,
             createdDate: dateStr,
             childName: cName,
-            amount: parseFloat(g.amount || 45.00),
+            amount: oGrandTotal,
             dates: dateSections,
             orderAmount: oSubtotal,
             salesTax: oTax,
-            schoolFees: 0.00,
-            lateFees: 0.00,
+            schoolFees: oSchoolFee,
+            lateFees: oLateFee,
             grandTotal: oGrandTotal
           };
         });
@@ -271,22 +192,25 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
           setExpandedOrderIds([mappedOrders[0].orderId]);
         }
 
-        const validIds = mappedOrders.map(o => o.orderId).filter(Boolean);
+        const validIds = mappedOrders.map(o => o.orderId).filter(id => typeof id === 'number' || (typeof id === 'string' && !id.startsWith('local_')));
         if (validIds.length > 0) {
-          const calcRes = await calculateTotalApi({ orderIds: validIds, useCredits: true });
-          if (calcRes && calcRes.status === 'success') {
-            setSummary(calcRes);
+          try {
+            const calcRes = await calculateTotalApi({ orderIds: validIds, useCredits: true });
+            if (calcRes && calcRes.status === 'success') {
+              setSummary(calcRes);
+            }
+          } catch (calcErr) {
+            console.error('Error calculating total:', calcErr);
           }
         }
       } else {
-        // Fallback to mockup data if cart is currently empty
-        setOrders(DEFAULT_MOCK_ORDERS);
-        setExpandedOrderIds([4067284]);
+        setOrders([]);
+        setSummary(null);
       }
     } catch (err) {
-      console.log('Cart fetch notice, rendering mockup orders:', err);
-      setOrders(DEFAULT_MOCK_ORDERS);
-      setExpandedOrderIds([4067284]);
+      console.error('Cart fetch notice for checkout:', err);
+      setOrders([]);
+      setSummary(null);
     } finally {
       setLoading(false);
     }
@@ -302,16 +226,46 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
     );
   };
 
-  const handleDeleteOrder = async (orderId) => {
+  const promptDeleteOrder = (order) => {
+    setDeleteModal({
+      isOpen: true,
+      order,
+    });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteModal.order) return;
+    const orderId = deleteModal.order.orderId;
+    setDeleting(true);
     try {
       await deleteCartItemApi(orderId);
-      toast.success('Order removed from checkout.');
-      setOrders(prev => prev.filter(o => o.orderId !== orderId));
+      toast.success('Order removed from cart.');
+      const remainingOrders = orders.filter(o => o.orderId !== orderId);
+      setOrders(remainingOrders);
       if (refreshCart) refreshCart();
+      const validIds = remainingOrders.map(o => o.orderId).filter(id => typeof id === 'number' || (typeof id === 'string' && !id.startsWith('local_')));
+      if (validIds.length > 0) {
+        try {
+          const calcRes = await calculateTotalApi({ orderIds: validIds, useCredits: true });
+          if (calcRes && calcRes.status === 'success') {
+            setSummary(calcRes);
+          }
+        } catch (calcErr) {
+          console.error('Error recalculating total after delete:', calcErr);
+        }
+      } else {
+        setSummary(null);
+      }
     } catch (err) {
-      // If error or mock order, remove from local state
-      setOrders(prev => prev.filter(o => o.orderId !== orderId));
-      toast.success('Order removed.');
+      console.error('Delete order error:', err);
+      const errMsg = err.response?.data?.message || err.response?.data?.detail?.message || 'Could not remove order from cart.';
+      toast.error(errMsg);
+      const remainingOrders = orders.filter(o => o.orderId !== orderId);
+      setOrders(remainingOrders);
+      if (refreshCart) refreshCart();
+    } finally {
+      setDeleting(false);
+      setDeleteModal({ isOpen: false, order: null });
     }
   };
 
@@ -322,30 +276,46 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
 
   /* ── Calculations ── */
   const dueAmount = summary 
-    ? parseFloat(summary.subtotal || 5.25)
-    : orders.reduce((acc, o) => acc + (o.orderAmount || 0), 0) || 5.25;
+    ? parseFloat(summary.subtotal ?? 0)
+    : orders.reduce((acc, o) => acc + (parseFloat(o.orderAmount) || 0), 0);
 
-  const avlCredits = summary
-    ? parseFloat(summary.availableCredits || availableFunds || 0.53)
-    : (parseFloat(availableFunds) > 0 ? parseFloat(availableFunds) : 0.53);
+  const salesTax = summary
+    ? parseFloat(summary.salesTax ?? 0)
+    : orders.reduce((acc, o) => acc + (parseFloat(o.salesTax) || 0), 0);
 
-  const appliedCredits = summary
-    ? parseFloat(summary.creditsApplied || 0)
-    : 0.00;
+  const schoolFees = summary
+    ? parseFloat(summary.schoolFees ?? 0)
+    : orders.reduce((acc, o) => acc + (parseFloat(o.schoolFees) || 0), 0);
 
   const convenienceFee = summary
-    ? parseFloat(summary.convenienceFee || 0)
+    ? parseFloat(summary.convenienceFee ?? 0)
     : 0.00;
 
-  const amountToPay = summary
-    ? parseFloat(summary.amountToPay || summary.total || 5.78)
-    : orders.reduce((acc, o) => acc + (o.grandTotal || 0), 0) || 5.78;
+  const totalAmount = summary
+    ? parseFloat(summary.total ?? (dueAmount + salesTax + schoolFees + convenienceFee))
+    : (dueAmount + salesTax + schoolFees + convenienceFee);
+
+  const avlCredits = summary?.availableCredits !== undefined
+    ? parseFloat(summary.availableCredits)
+    : parseFloat(availableFunds || 0);
+
+  const appliedCredits = summary?.creditsApplied !== undefined
+    ? parseFloat(summary.creditsApplied)
+    : Math.min(totalAmount, avlCredits);
+
+  const amountToPay = summary?.amountToPay !== undefined
+    ? parseFloat(summary.amountToPay)
+    : Math.max(0, totalAmount - appliedCredits);
 
   const deficit = Math.max(0, amountToPay - avlCredits);
 
   /* ── Proceed with Checkout ── */
   const handleProceed = async () => {
     const activeOrderIds = orders.map(o => o.orderId).filter(Boolean);
+    if (activeOrderIds.length === 0) {
+      toast.warn('No orders selected for checkout.');
+      return;
+    }
 
     if (avlCredits < amountToPay) {
       toast.warn(`Insufficient wallet credits. Please add funds to cover $${amountToPay.toFixed(2)}.`);
@@ -384,25 +354,12 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
         }
         toast.success('Orders placed and paid successfully!');
       } else {
-        // Fallback simulate success for test flow
-        setReceipt({
-          orderId: activeOrderIds[0] || 4067283,
-          amount: amountToPay,
-          paidDate: new Date().toLocaleDateString()
-        });
-        setShowSuccess(true);
-        toast.success('Payment completed successfully!');
+        toast.error(checkRes?.message || 'Checkout failed. Please try again.');
       }
     } catch (err) {
-      console.log('Checkout error:', err);
-      // If endpoint returns error due to mock orders, simulate success preview
-      setReceipt({
-        orderId: activeOrderIds[0] || 4067283,
-        amount: amountToPay,
-        paidDate: new Date().toLocaleDateString()
-      });
-      setShowSuccess(true);
-      toast.success('Payment completed successfully!');
+      console.error('Checkout error:', err);
+      const errMsg = err.response?.data?.message || err.response?.data?.detail?.message || 'Payment processing failed. Please try again.';
+      toast.error(errMsg);
     } finally {
       setPaying(false);
     }
@@ -425,6 +382,7 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
         if (setAvailableFunds && res.newBalance !== undefined) {
           setAvailableFunds(parseFloat(res.newBalance));
         }
+        await loadCartOrders();
       } else {
         toast.error(res?.message || 'Could not complete top up.');
       }
@@ -439,6 +397,26 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
     return (
       <div style={{ marginTop: 24 }}>
         <ShimmerCart />
+      </div>
+    );
+  }
+
+  if (orders.length === 0) {
+    return (
+      <div className="checkout-empty-wrap" style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: '12px', margin: '24px 0', border: '1px solid #E2E8F0' }}>
+        <i className="lni lni-cart" style={{ fontSize: 56, color: '#006D77', display: 'block', marginBottom: 16 }} />
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1E293B', marginBottom: 8 }}>Your Checkout Cart is Empty</h2>
+        <p style={{ color: '#64748B', fontSize: 15, maxWidth: 460, margin: '0 auto 24px' }}>
+          There are no pending meal orders selected for checkout. Please browse our daily menus to select meals for your children.
+        </p>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => navigate('/dashboard')}
+          style={{ padding: '10px 24px', fontSize: 14, fontWeight: 600, borderRadius: 8, cursor: 'pointer' }}
+        >
+          Browse Menus
+        </button>
       </div>
     );
   }
@@ -508,8 +486,8 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
                   <button
                     type="button"
                     className="checkout-circle-btn pink"
-                    onClick={() => handleDeleteOrder(order.orderId)}
-                    title="Remove Order"
+                    onClick={() => promptDeleteOrder(order)}
+                    title="Delete Order from Cart"
                   >
                     <i className="lni lni-minus" />
                   </button>
@@ -576,14 +554,18 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
                       <span>Sales Tax</span>
                       <span>${order.salesTax.toFixed(2)}</span>
                     </div>
-                    <div className="checkout-sub-row">
-                      <span>School Fees</span>
-                      <span>${order.schoolFees.toFixed(2)}</span>
-                    </div>
-                    <div className="checkout-sub-row">
-                      <span>Late Fees</span>
-                      <span>${order.lateFees.toFixed(2)}</span>
-                    </div>
+                    {order.schoolFees > 0 && (
+                      <div className="checkout-sub-row">
+                        <span>School Fees</span>
+                        <span>${order.schoolFees.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {order.lateFees > 0 && (
+                      <div className="checkout-sub-row">
+                        <span>Late Fees</span>
+                        <span>${order.lateFees.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="checkout-sub-row grand-total">
                       <span>Grand Total</span>
                       <span>${order.grandTotal.toFixed(2)}</span>
@@ -658,13 +640,32 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
             </div>
 
             <div className="checkout-transaction-row shaded">
+              <span>Sales Tax</span>
+              <span>${salesTax.toFixed(2)}</span>
+            </div>
+
+            {schoolFees > 0 && (
+              <div className="checkout-transaction-row plain">
+                <span>School Fees</span>
+                <span>${schoolFees.toFixed(2)}</span>
+              </div>
+            )}
+
+            <div className="checkout-transaction-row plain">
               <span>Avl. Credits</span>
               <span>${avlCredits.toFixed(2)}</span>
             </div>
 
+            {appliedCredits > 0 && (
+              <div className="checkout-transaction-row shaded">
+                <span>Credits Applied</span>
+                <span style={{ color: '#059669', fontWeight: 600 }}>-${appliedCredits.toFixed(2)}</span>
+              </div>
+            )}
+
             <div className="checkout-transaction-row plain">
               <span>Total</span>
-              <span>${appliedCredits.toFixed(2)}</span>
+              <span>${totalAmount.toFixed(2)}</span>
             </div>
 
             <div className="checkout-transaction-row shaded">
@@ -796,6 +797,50 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
                 onClick={() => navigate('/dashboard')}
               >
                 Back to Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Delete Confirmation Modal ── */}
+      {deleteModal.isOpen && deleteModal.order && (
+        <div className="modal-overlay" onClick={() => !deleting && setDeleteModal({ isOpen: false, order: null })}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#FEE2E2', color: '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                <i className="lni lni-trash-can" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#1E293B' }}>
+                  Remove Order #{deleteModal.order.orderId}?
+                </h3>
+                <span style={{ fontSize: 13, color: '#64748B' }}>
+                  Student: {deleteModal.order.childName}
+                </span>
+              </div>
+            </div>
+
+            <p style={{ color: '#64748B', fontSize: 13.5, lineHeight: 1.5, margin: '14px 0 20px' }}>
+              Are you sure you want to remove this meal order of <strong>${deleteModal.order.grandTotal.toFixed(2)}</strong> from your checkout cart?
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                type="button"
+                className="btn-cancel"
+                disabled={deleting}
+                onClick={() => setDeleteModal({ isOpen: false, order: null })}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={deleting}
+                onClick={handleConfirmDelete}
+                style={{ background: '#E54A4A', borderColor: '#E54A4A', color: '#fff' }}
+              >
+                {deleting ? 'Removing...' : 'Remove Order'}
               </button>
             </div>
           </div>

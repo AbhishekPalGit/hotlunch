@@ -34,7 +34,7 @@ const ChildrenPage = () => {
 
           const campusName = c.campusInfo?.name || c.campusName || (typeof c.campus === 'string' ? c.campus : '--');
           const gradeName = c.gradeInfo?.name || c.gradeName || (typeof c.grade === 'string' ? c.grade : (c.grade ? String(c.grade) : '--'));
-          const className = c.classInfo?.name || c.className || (typeof c.class === 'string' ? c.class : (c.class ? String(c.class) : '--'));
+          const className = c.classroomName || c.classroom || c.classInfo?.name || c.className || (typeof c.class === 'string' ? c.class : (c.class ? String(c.class) : '--'));
 
           return {
             id: c.id || index + 1,

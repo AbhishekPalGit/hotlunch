@@ -115,8 +115,7 @@ export const registerApi = async (data) => {
 };
 
 export const getProfileApi = async () => {
-  const response = await api.get('api/v1/profile');
-  return response.data;
+  return dedupeGet('api/v1/profile');
 };
 
 export const updateProfileApi = async (data) => {
@@ -174,7 +173,8 @@ export const getCartApi = async () => {
 };
 
 export const deleteCartItemApi = async (orderId) => {
-  const response = await api.delete(`api/v1/orders/cart/${orderId}`);
+  const cleanId = typeof orderId === 'object' && orderId !== null ? (orderId.orderId || orderId.id) : orderId;
+  const response = await api.delete(`api/v1/orders/cart/${cleanId}`);
   return response.data;
 };
 

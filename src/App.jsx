@@ -47,14 +47,17 @@ function App() {
             data.forEach(group => {
               const childName = group.childName || group.studentName || group.student || group.fullName || group.name || 'Student';
               const dates = group.dates || [];
+              const groupOrderId = group.orderId || group.id;
               if (dates.length > 0) {
                 dates.forEach(dateBlock => {
                   const dateLabel = dateBlock.displayDate || dateBlock.date || '--';
                   const items = dateBlock.items || dateBlock.itemsArray || [];
-                  items.forEach(item => {
+                  items.forEach((item, itemIdx) => {
+                    const finalOrderId = groupOrderId || item.orderId;
                     flat.push({
-                      id: item.orderId || item.id,
-                      orderId: item.orderId || group.orderId,
+                      id: finalOrderId || item.id || `cart_${itemIdx}`,
+                      orderId: finalOrderId,
+                      connectId: item.id,
                       student: childName,
                       studentName: childName,
                       childName: childName,
@@ -68,10 +71,12 @@ function App() {
                   });
                 });
               } else if (group.items && group.items.length > 0) {
-                group.items.forEach(item => {
+                group.items.forEach((item, itemIdx) => {
+                  const finalOrderId = groupOrderId || item.orderId;
                   flat.push({
-                    id: item.orderId || item.id,
-                    orderId: item.orderId || group.orderId,
+                    id: finalOrderId || item.id || `cart_${itemIdx}`,
+                    orderId: finalOrderId,
+                    connectId: item.id,
                     student: childName,
                     studentName: childName,
                     childName: childName,
@@ -115,18 +120,37 @@ function App() {
         getProfileApi(),
         getDashboardSummaryApi()
       ]);
-      if (profileRes.status === 'fulfilled' && profileRes.value?.status === 'success') {
-        const u = profileRes.value.data;
+
+      if (profileRes.status === 'fulfilled' && profileRes.value) {
+        const raw = profileRes.value;
+        const u = raw.data || (raw.firstName || raw.email || raw.id ? raw : null);
         if (u) {
-          const name = u.name || `${u.firstName || u.first_name || ''} ${u.lastName || u.last_name || ''}`.trim();
-          if (name) setUserName(name);
+          const fName = u.firstName || u.first_name || '';
+          const lName = u.lastName || u.last_name || '';
+          const name = u.fullName || u.name || `${fName} ${lName}`.trim();
+          if (name) {
+            setUserName(name);
+            try {
+              const currentSaved = JSON.parse(localStorage.getItem('user_details') || '{}');
+              localStorage.setItem('user_details', JSON.stringify({ ...currentSaved, ...u, name, fullName: name }));
+            } catch (e) {}
+          }
         }
       }
-      if (summaryRes.status === 'fulfilled' && summaryRes.value?.status === 'success') {
-        const sumData = summaryRes.value.data?.summary;
+
+      if (summaryRes.status === 'fulfilled' && summaryRes.value) {
+        const sumRaw = summaryRes.value;
+        const sumData = sumRaw.data?.summary || sumRaw.summary;
         if (sumData) {
           if (sumData.availableFunds !== undefined) setAvailableFunds(parseFloat(sumData.availableFunds) || 0);
           if (sumData.amountOwed !== undefined) setAmountOwed(parseFloat(sumData.amountOwed) || 0);
+        }
+        const parentData = sumRaw.data?.parent || sumRaw.parent;
+        if (parentData) {
+          const pName = parentData.fullName || parentData.name || `${parentData.firstName || ''} ${parentData.lastName || ''}`.trim();
+          if (pName) {
+            setUserName(prev => prev || pName);
+          }
         }
       }
     } catch (e) {
@@ -168,10 +192,18 @@ function App() {
   };
 
   const handleLoginSuccess = (user) => {
-    setIsLoggedIn(true);
-    if (user?.name) setUserName(user.name);
-    refreshUserData();
-    refreshCart();
+    const fName = user?.firstName || user?.first_name || '';
+    const lName = user?.lastName || user?.last_name || '';
+    const name = user?.fullName || user?.name || `${fName} ${lName}`.trim() || 'Parent';
+    setUserName(name);
+    setIsLoggedIn(prev => {
+      if (prev) {
+        refreshUserData();
+        refreshCart();
+        return prev;
+      }
+      return true;
+    });
   };
 
   const handleSignOut = () => {

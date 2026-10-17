@@ -35,7 +35,7 @@ const LunchCardGenerator = ({ students = [] }) => {
               studentId: c.sid || c.studentId || `STU${c.id || idx + 1}`,
               campus: c.campusInfo?.name || c.campusName || c.campus || 'Valleyview Middle New',
               grade: c.gradeInfo?.name || c.gradeName || (c.grade ? String(c.grade) : '6'),
-              classroom: c.classInfo?.name || c.className || (c.class ? String(c.class) : '1')
+              classroom: c.classroomName || c.classroom || c.classInfo?.name || c.className || (c.class ? String(c.class) : '1')
             }));
             setStudentList(mapped);
             if (!selectedStudent && mapped.length > 0) {

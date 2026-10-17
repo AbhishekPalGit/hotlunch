@@ -110,13 +110,27 @@ const LoginPage = ({ onLoginSuccess }) => {
       if (response && (response.access_token || response.status === 'success')) {
         if (response.access_token) localStorage.setItem('access_token', response.access_token);
         if (response.refresh_token) localStorage.setItem('refresh_token', response.refresh_token);
-        if (response.user) localStorage.setItem('user_details', JSON.stringify(response.user));
+
+        const rawUser = response.user || {};
+        const fName = rawUser.firstName || rawUser.first_name || '';
+        const lName = rawUser.lastName || rawUser.last_name || '';
+        const full = rawUser.fullName || rawUser.name || `${fName} ${lName}`.trim() || login.split('@')[0];
+
+        const userToStore = {
+          ...rawUser,
+          name: full,
+          fullName: full,
+          firstName: fName,
+          lastName: lName,
+          email: rawUser.email || login
+        };
+
+        localStorage.setItem('user_details', JSON.stringify(userToStore));
         localStorage.setItem('is_logged_in', 'true');
 
-        const userDisplayName = response.user?.name || response.user?.first_name || login.split('@')[0];
-        if (onLoginSuccess) onLoginSuccess(response.user || { name: userDisplayName, email: login });
+        if (onLoginSuccess) onLoginSuccess(userToStore);
 
-        toast.success(`Welcome back, ${userDisplayName}!`);
+        toast.success(`Welcome back, ${full}!`);
         navigate('/dashboard');
       } else {
         const msg = response?.message || 'Login failed. Please check your credentials.';

@@ -196,12 +196,34 @@ export function getMonthGridDays(baseDateOrString) {
   return grid;
 }
 
+function formatMenuItem(item, index) {
+  return {
+    id: item.id || item.itemId || (51 + index),
+    mcid: item.mcid,
+    name: item.name || item.title || item.itemName || 'Meal Option',
+    size: item.size || item.portion || 'REGULAR',
+    price: parseFloat(item.price || item.sp || item.amount || 0),
+    image: item.image || item.photoUrl || item.imageUrl || `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=120&q=80`,
+    isVegetarian: !!(item.veg || item.isVegetarian || item.is_vegetarian),
+    isVegan: !!(item.vegan || item.isVegan || item.is_vegan),
+    isGlutenFree: !!(item.glutenFree || item.isGlutenFree || item.is_gluten_free),
+    isAllergen: !!(item.allergens?.length || item.is_allergen || item.isAllerege || item.isAllergen),
+    addonsCount: Array.isArray(item.addon)
+      ? item.addon.length
+      : (Array.isArray(item.addons) ? item.addons.length : (item.addonsCount !== undefined ? item.addonsCount : 0)),
+    addons: Array.isArray(item.addon) && item.addon.length > 0
+      ? item.addon
+      : (Array.isArray(item.addons) ? item.addons : []),
+    addon: Array.isArray(item.addon) ? item.addon : []
+  };
+}
+
 function parseApiMenuData(rawData, visibleDays = []) {
   const result = {};
 
   if (!visibleDays || visibleDays.length === 0) {
     DAYS_OF_WEEK.forEach(d => {
-      result[d] = { date: '', isToday: false, items: [] };
+      result[d] = { date: '', isToday: false, fullDateStr: '', items: [] };
     });
   } else {
     visibleDays.forEach(d => {
@@ -214,27 +236,67 @@ function parseApiMenuData(rawData, visibleDays = []) {
     });
   }
 
-  let itemList = [];
-  if (rawData) {
-    if (Array.isArray(rawData)) {
-      itemList = rawData;
-    } else if (rawData.config && Array.isArray(rawData.config)) {
-      rawData.config.forEach(block => {
-        const blockItems = Array.isArray(block.itemsArray) ? block.itemsArray : (Array.isArray(block.items) ? block.items : []);
-        blockItems.forEach(it => {
-          itemList.push({
-            ...it,
-            startDate: block.startDate,
-            endDate: block.endDate,
-            mcid: block.id || it.mcid
+  if (!rawData) return result;
+
+  const configBlocks = Array.isArray(rawData.config) ? rawData.config : null;
+
+  // 1. Precise date-matching if config blocks with dates are present
+  if (configBlocks && configBlocks.length > 0 && visibleDays.length > 0) {
+    const hasDateOverlap = visibleDays.some(d => {
+      return configBlocks.some(block => {
+        if (!block.startDate) return false;
+        const start = block.startDate;
+        const end = block.endDate || block.startDate;
+        return start <= d.fullDateStr && end >= d.fullDateStr;
+      });
+    });
+
+    if (hasDateOverlap) {
+      visibleDays.forEach(d => {
+        const matchingBlocks = configBlocks.filter(block => {
+          if (!block.startDate) return false;
+          const start = block.startDate;
+          const end = block.endDate || block.startDate;
+          return start <= d.fullDateStr && end >= d.fullDateStr;
+        });
+
+        matchingBlocks.forEach((block, bIdx) => {
+          const blockItems = Array.isArray(block.itemsArray) ? block.itemsArray : (Array.isArray(block.items) ? block.items : []);
+          blockItems.forEach((it, itIdx) => {
+            const formatted = formatMenuItem(
+              { ...it, mcid: block.id || it.mcid, startDate: block.startDate, endDate: block.endDate },
+              bIdx * 100 + itIdx
+            );
+            if (!result[d.dayName].items.some(existing => existing.id === formatted.id)) {
+              result[d.dayName].items.push(formatted);
+            }
           });
         });
       });
-    } else if (rawData.items && Array.isArray(rawData.items)) {
-      itemList = rawData.items;
-    } else if (rawData.menus && Array.isArray(rawData.menus)) {
-      itemList = rawData.menus;
+      return result;
     }
+  }
+
+  // 2. Fallback: distribute across weekdays if no direct date overlap (e.g. historical sample menus)
+  let itemList = [];
+  if (Array.isArray(rawData)) {
+    itemList = rawData;
+  } else if (configBlocks) {
+    configBlocks.forEach(block => {
+      const blockItems = Array.isArray(block.itemsArray) ? block.itemsArray : (Array.isArray(block.items) ? block.items : []);
+      blockItems.forEach(it => {
+        itemList.push({
+          ...it,
+          startDate: block.startDate,
+          endDate: block.endDate,
+          mcid: block.id || it.mcid
+        });
+      });
+    });
+  } else if (rawData.items && Array.isArray(rawData.items)) {
+    itemList = rawData.items;
+  } else if (rawData.menus && Array.isArray(rawData.menus)) {
+    itemList = rawData.menus;
   }
 
   if (itemList.length > 0) {
@@ -254,27 +316,8 @@ function parseApiMenuData(rawData, visibleDays = []) {
         }
       }
 
-      const formattedItem = {
-        id: item.id || item.itemId || (51 + index),
-        mcid: item.mcid,
-        name: item.name || item.title || item.itemName || 'Meal Option',
-        size: item.size || item.portion || 'REGULAR',
-        price: parseFloat(item.price || item.amount || 0),
-        image: item.image || item.photoUrl || item.imageUrl || `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=120&q=80`,
-        isVegetarian: !!(item.veg || item.isVegetarian || item.is_vegetarian),
-        isVegan: !!(item.vegan || item.isVegan || item.is_vegan),
-        isGlutenFree: !!(item.glutenFree || item.isGlutenFree || item.is_gluten_free),
-        isAllergen: !!(item.allergens?.length || item.is_allergen || item.isAllerege || item.isAllergen),
-        addonsCount: Array.isArray(item.addon)
-          ? item.addon.length
-          : (Array.isArray(item.addons) ? item.addons.length : (item.addonsCount !== undefined ? item.addonsCount : 0)),
-        addons: Array.isArray(item.addon) && item.addon.length > 0
-          ? item.addon
-          : (Array.isArray(item.addons) ? item.addons : []),
-        addon: Array.isArray(item.addon) ? item.addon : []
-      };
-
-      if (result[dayName]) {
+      const formattedItem = formatMenuItem(item, index);
+      if (result[dayName] && !result[dayName].items.some(existing => existing.id === formattedItem.id)) {
         result[dayName].items.push(formattedItem);
       }
     });
@@ -646,14 +689,9 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     return false;
   };
 
-  // Plus button click: increments quantity and automatically opens addon window if addons are available
-  const handlePlusClick = (childId, day, item, currentQty) => {
-    const nextQty = (currentQty || 0) + 1;
+  // Plus button click: increments quantity
+  const handlePlusClick = (childId, day, item) => {
     updateQty(childId, day, item.id, 1);
-
-    if (isItemAddonAvailable(item)) {
-      handleOpenAddons(childId, day, item, nextQty);
-    }
   };
 
   const handleOpenWeekForDay = (targetDate) => {
@@ -758,9 +796,10 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     const cid = childId ?? 'default';
     const childSelections = menuQuantities[cid] || menuQuantities['default'] || {};
     const cellWeekOffset = getWeekOffsetForDate(cell.dateObj);
-    if (cellWeekOffset === weekOffset && childSelections[cell.dayName]) {
-      const daySelections = childSelections[cell.dayName];
-      const { weekDays } = getWeekDates(weekOffset);
+    const daySelections = childSelections[cellDateStr] || (cellWeekOffset === weekOffset ? childSelections[cell.dayName] : null);
+
+    if (daySelections) {
+      const { weekDays } = getWeekDates(cellWeekOffset);
       const activeMenu = parseApiMenuData(apiMenus[childId], weekDays);
       const dayMenu = activeMenu[cell.dayName];
       const selectedItems = [];
@@ -768,11 +807,18 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
       Object.keys(daySelections).forEach(itemId => {
         const qty = daySelections[itemId] || 0;
         if (qty > 0) {
-          const found = dayMenu?.items?.find(i => String(i.id) === String(itemId));
+          let found = dayMenu?.items?.find(i => String(i.id) === String(itemId));
+          if (!found && apiMenus[childId]?.config) {
+            apiMenus[childId].config.forEach(b => {
+              const bItems = b.itemsArray || b.items || [];
+              const match = bItems.find(i => String(i.id) === String(itemId));
+              if (match) found = match;
+            });
+          }
           selectedItems.push({
-            name: found?.name || `Meal Option`,
+            name: found?.name || found?.title || `Meal Option`,
             quantity: qty,
-            price: found?.price || 0
+            price: parseFloat(found?.price || found?.sp || 0)
           });
         }
       });
@@ -810,17 +856,19 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     setMenuQuantities(prev => {
       const childData = prev[cid] ? { ...prev[cid] } : {};
       Object.keys(activeMenu).forEach(day => {
-        const firstItem = activeMenu[day]?.items[0];
+        const dayObj = activeMenu[day];
+        const dayKey = dayObj?.fullDateStr || day;
+        const firstItem = dayObj?.items[0];
         if (firstItem) {
-          childData[day] = {
-            ...(childData[day] || {}),
+          childData[dayKey] = {
+            ...(childData[dayKey] || {}),
             [firstItem.id]: 1
           };
         }
       });
       return { ...prev, [cid]: childData };
     });
-    toast.info('Selected first menu item for all days!');
+    toast.info('Selected first menu item for all days of this week!');
   };
 
   const handleCopyOrder = (targetChildId, sourceStudentName) => {
@@ -897,11 +945,15 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
 
     Object.keys(childSelections).forEach(day => {
       const dayData = activeMenu[day];
-      let dateStr = dayData?.fullDateStr;
+      let dateStr = /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : dayData?.fullDateStr;
       if (!dateStr) {
         const matchedWeekDay = weekDays.find(w => w.dayName.toLowerCase() === day.toLowerCase());
         dateStr = matchedWeekDay?.fullDateStr || formatLocalDateToYMD(new Date());
       }
+
+      const dayName = /^\d{4}-\d{2}-\d{2}$/.test(day)
+        ? (parseLocalDate(day) ? parseLocalDate(day).toLocaleDateString('en-US', { weekday: 'long' }) : day)
+        : day;
 
       const dayItems = [];
 
@@ -909,7 +961,8 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
         const qty = parseInt(childSelections[day][itemId], 10) || 0;
         if (qty > 0) {
           const addonKey = `${cid}_${day}_${itemId}`;
-          const addonSelections = selectedAddonsMap[addonKey] || {};
+          const legacyAddonKey = `${cid}_${dayName}_${itemId}`;
+          const addonSelections = selectedAddonsMap[addonKey] || selectedAddonsMap[legacyAddonKey] || {};
           const flatAddonIds = Object.values(addonSelections).flat();
           const addonList = flatAddonIds.map(aid => ({
             id: parseInt(aid, 10) || 88,
@@ -921,6 +974,23 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
             const found = d.items?.find(i => String(i.id) === String(itemId));
             if (found) itemDetails = found;
           });
+
+          if (!itemDetails && apiMenus[child?.id]) {
+            const apiMenu = apiMenus[child?.id];
+            if (Array.isArray(apiMenu.config)) {
+              for (const block of apiMenu.config) {
+                const found = (block.items || []).find(i => String(i.id || i.product_id || i.productId) === String(itemId));
+                if (found) {
+                  itemDetails = formatMenuItem(found);
+                  break;
+                }
+              }
+            }
+            if (!itemDetails && Array.isArray(apiMenu.items)) {
+              const found = apiMenu.items.find(i => String(i.id || i.product_id || i.productId) === String(itemId));
+              if (found) itemDetails = formatMenuItem(found);
+            }
+          }
 
           const numericItemId = !isNaN(parseInt(itemId, 10))
             ? parseInt(itemId, 10)
@@ -949,7 +1019,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
             itemName: itemDetails?.name || 'Lunch Meal',
             price: parseFloat(itemDetails?.price || 0),
             quantity: qty,
-            day,
+            day: dayName,
             date: dateStr,
             addons: addonNames
           });
@@ -957,7 +1027,10 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
       });
 
       if (dayItems.length > 0) {
-        config[classroomKey][dateStr] = dayItems;
+        config[classroomKey][dateStr] = [
+          ...(config[classroomKey][dateStr] || []),
+          ...dayItems
+        ];
       }
     });
 
@@ -988,13 +1061,25 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
       const res = await createOrderApi(orderPayload);
       // Check for orders API response; only then save to cart in local state
       if (res && (res.status === 'success' || res.orderId || res.succ_code)) {
+        const returnedOrderId = res.orderId || res.id;
         if (addToCart && itemsToSync.length > 0) {
-          itemsToSync.forEach(it => addToCart(it));
+          itemsToSync.forEach(it => addToCart({ ...it, orderId: returnedOrderId, id: returnedOrderId || it.id }));
         }
         if (refreshCart) {
           await refreshCart();
         }
         fetchPlacedOrders();
+        setMenuQuantities(prev => ({
+          ...prev,
+          [cid]: {}
+        }));
+        setSelectedAddonsMap(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(k => {
+            if (k.startsWith(`${cid}_`)) delete next[k];
+          });
+          return next;
+        });
         toast.success(`Added ${totalItems} meal${totalItems > 1 ? 's' : ''} to cart for ${studentDisplayName}!`);
       } else {
         const errorMsg = res?.message || 'Could not add order to cart.';
@@ -1088,9 +1173,9 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
               const isExpanded = expandedChildId === childId;
               const fullName = child.name || `${child.firstName || ''} ${child.lastName || ''}`.trim() || `Child #${childId}`;
               const initials = fullName.split(' ').map(n => n[0] || '').join('').toUpperCase().slice(0, 2) || 'ST';
-              const campus = child.campusName || child.campusInfo?.name || '--';
-              const grade = child.gradeName || child.gradeInfo?.name || '--';
-              const room = child.className || child.classInfo?.name || '--';
+              const campus = child.campusName || child.campus || child.campus_rel?.name || child.campusInfo?.name || '--';
+              const grade = child.gradeName || child.grade || child.grade_rel?.name || child.gradeInfo?.name || '--';
+              const room = child.classroomName || child.classroom || child.classroom_rel?.name || child.className || child.classInfo?.name || '--';
               const balance = child.balance ?? child.owed ?? '0.00';
               const cidKey = childId ?? 'default';
               const childQuantities = menuQuantities[cidKey] || {};
@@ -1110,11 +1195,11 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                         </div>
                         <div className="student-name">{fullName}</div>
                         <div className="meta-divider" />
-                        <div className="meta-item"><i className="lni lni-apartment" /><span>{campus}</span></div>
+                        <div className="meta-item" title={`Campus: ${campus}`}><i className="lni lni-apartment" /><span>{campus}</span></div>
                         <div className="meta-divider" />
-                        <div className="meta-item"><i className="lni lni-display-alt" /><span>{room}</span></div>
+                        <div className="meta-item" title={`Classroom: ${room}`}><i className="lni lni-display-alt" /><span>{room}</span></div>
                         <div className="meta-divider" />
-                        <div className="meta-item"><i className="lni lni-graduation" /><span>{grade}</span></div>
+                        <div className="meta-item" title={`Grade: ${grade}`}><i className="lni lni-graduation" /><span>{grade}</span></div>
                       </div>
 
                       <div className="card-right">
@@ -1168,9 +1253,9 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                             </select>
                           </div>
                           <div className="accordion-meta-block">
-                            <div><i className="lni lni-apartment" /> {campus}</div>
-                            <div><i className="lni lni-display-alt" /> {room}</div>
-                            <div><i className="lni lni-graduation" /> {grade}</div>
+                            <div title={`Campus: ${campus}`}><i className="lni lni-apartment" /> {campus}</div>
+                            <div title={`Classroom: ${room}`}><i className="lni lni-display-alt" /> {room}</div>
+                            <div title={`Grade: ${grade}`}><i className="lni lni-graduation" /> {grade}</div>
                           </div>
                         </div>
 
@@ -1300,8 +1385,9 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                     <div className="weekly-columns-grid">
                                       {Object.keys(activeWeeklyMenu).map(day => {
                                         const dayObj = activeWeeklyMenu[day];
+                                        const dayKey = dayObj.fullDateStr || day;
                                         return (
-                                          <div className="weekly-day-column" key={day} style={{ border: dayObj.isToday ? '2px solid #006D77' : undefined }}>
+                                          <div className="weekly-day-column" key={dayKey} style={{ border: dayObj.isToday ? '2px solid #006D77' : undefined }}>
                                             <div className="weekly-day-header" style={{ background: dayObj.isToday ? '#E6F4F5' : undefined }}>
                                               <span className="day-date" style={{ color: dayObj.isToday ? '#006D77' : undefined, fontWeight: dayObj.isToday ? 800 : undefined }}>
                                                 {dayObj.date}
@@ -1319,7 +1405,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                                 </div>
                                               ) : (
                                                 dayObj.items.map(item => {
-                                                  const currentQty = childQuantities[day]?.[item.id] || 0;
+                                                  const currentQty = childQuantities[dayKey]?.[item.id] || (childQuantities[day]?.[item.id] || 0);
                                                   const isSelected = currentQty > 0;
 
                                                   return (
@@ -1341,28 +1427,30 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                                       <div className="accordion-food-bottom">
                                                         <div className="accordion-food-bottom-left">
                                                           <div className="accordion-qty-box">
-                                                            <button className="accordion-qty-btn" onClick={() => updateQty(childId, day, item.id, -1)}>-</button>
+                                                            <button className="accordion-qty-btn" onClick={() => updateQty(childId, dayKey, item.id, -1)}>-</button>
                                                             <span className="accordion-qty-val">{currentQty}</span>
-                                                            <button className="accordion-qty-btn" onClick={() => handlePlusClick(childId, day, item, currentQty)}>+</button>
+                                                            <button className="accordion-qty-btn" onClick={() => handlePlusClick(childId, dayKey, item, currentQty)}>+</button>
                                                           </div>
 
                                                           {/* Addons Pill Button */}
                                                           {(() => {
                                                             const hasAddons = isItemAddonAvailable(item);
-                                                            const addonKey = `${childId}_${day}_${item.id}`;
-                                                            const hasSelections = selectedAddonsMap[addonKey] !== undefined;
+                                                            const addonKey = `${childId}_${dayKey}_${item.id}`;
+                                                            const legacyAddonKey = `${childId}_${day}_${item.id}`;
+                                                            const hasSelections = selectedAddonsMap[addonKey] !== undefined || selectedAddonsMap[legacyAddonKey] !== undefined;
+                                                            const activeAddonKey = selectedAddonsMap[addonKey] !== undefined ? addonKey : legacyAddonKey;
 
                                                             // Only show addon pill if item actually has addons available or selections exist
                                                             if (!hasAddons && !hasSelections) return null;
 
                                                             const addonCount = hasSelections
-                                                              ? Object.values(selectedAddonsMap[addonKey]).reduce((sum, list) => sum + (list?.length || 0), 0)
+                                                              ? Object.values(selectedAddonsMap[activeAddonKey] || {}).reduce((sum, list) => sum + (list?.length || 0), 0)
                                                               : (item.addonsCount !== undefined ? item.addonsCount : (item.addons?.length || item.addon?.length || 0));
 
                                                             return (
                                                               <button
                                                                 className={`addons-pill-btn ${addonCount <= 0 ? 'add-mode' : ''}`}
-                                                                onClick={() => handleOpenAddons(childId, day, item, currentQty)}
+                                                                onClick={() => handleOpenAddons(childId, dayKey, item, currentQty)}
                                                                 title="Manage add-ons"
                                                               >
                                                                 {addonCount > 0 ? `${addonCount} addons` : '+ Addons'}
