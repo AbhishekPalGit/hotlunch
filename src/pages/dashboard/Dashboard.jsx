@@ -196,13 +196,59 @@ export function getMonthGridDays(baseDateOrString) {
   return grid;
 }
 
+export const getPriceBySize = (item, sizeId) => {
+  const price = Number(item?.price ?? item?.sp ?? 0);
+  const delta = Number(item?.delta ?? 0);
+
+  switch (sizeId) {
+    case 0: return Math.max(0, price - delta); // Small
+    case 1: return price;                      // Regular
+    case 2: return price + delta;              // Large
+    default: return price;
+  }
+};
+
+export const getSizeName = (sizeId) => {
+  switch (sizeId) {
+    case 0: return 'Small';
+    case 1: return 'Regular';
+    case 2: return 'Large';
+    default: return 'Regular';
+  }
+};
+
+export const parseAvailableSizes = (sizeStr) => {
+  if (sizeStr === null || sizeStr === undefined || sizeStr === '') {
+    return [0, 1, 2];
+  }
+  if (typeof sizeStr === 'string' && sizeStr.includes('|')) {
+    const parsed = sizeStr.split('|').filter(Boolean).map(s => parseInt(s, 10)).filter(n => !isNaN(n));
+    if (parsed.length > 0) {
+      if (!parsed.includes(1)) {
+        parsed.push(1);
+        parsed.sort((a, b) => a - b);
+      }
+      return parsed;
+    }
+  }
+  return [0, 1, 2];
+};
+
 function formatMenuItem(item, index) {
+  const rawPrice = parseFloat(item.price || item.sp || item.amount || 0);
+  const delta = item.delta !== undefined && item.delta !== null ? parseFloat(item.delta) : 0;
+  const availableSizes = parseAvailableSizes(item.size);
+
   return {
     id: item.id || item.itemId || (51 + index),
     mcid: item.mcid,
     name: item.name || item.title || item.itemName || 'Meal Option',
     size: item.size || item.portion || 'REGULAR',
-    price: parseFloat(item.price || item.sp || item.amount || 0),
+    rawSize: item.size,
+    availableSizes,
+    price: rawPrice,
+    sp: parseFloat(item.sp || item.price || 0),
+    delta,
     image: item.image || item.photoUrl || item.imageUrl || `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=120&q=80`,
     isVegetarian: !!(item.veg || item.isVegetarian || item.is_vegetarian),
     isVegan: !!(item.vegan || item.isVegan || item.is_vegan),
@@ -223,14 +269,16 @@ function parseApiMenuData(rawData, visibleDays = []) {
 
   if (!visibleDays || visibleDays.length === 0) {
     DAYS_OF_WEEK.forEach(d => {
-      result[d] = { date: '', isToday: false, fullDateStr: '', items: [] };
+      result[d] = { date: '', isToday: false, isPast: false, fullDateStr: '', dateObj: null, items: [] };
     });
   } else {
     visibleDays.forEach(d => {
       result[d.dayName] = {
         date: d.formattedDate,
         isToday: d.isToday,
+        isPast: d.isPast,
         fullDateStr: d.fullDateStr,
+        dateObj: d.dateObj,
         items: []
       };
     });
@@ -553,16 +601,38 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
   // Selected Addons Map: `${childId}_${day}_${itemId}` -> { [instanceIdx]: [addonId, ...] }
   const [selectedAddonsMap, setSelectedAddonsMap] = useState({});
 
+  // Selected Sizes Map: `${childId}_${dayKey}_${itemId}` -> sizeId (0: Small, 1: Regular, 2: Large)
+  // Default is 1 (Regular)
+  const [selectedSizesMap, setSelectedSizesMap] = useState({});
+
+  const getActiveSize = (childId, dayKey, itemId) => {
+    const key = `${childId}_${dayKey}_${itemId}`;
+    const legacyKey = `${childId}_${itemId}`;
+    if (selectedSizesMap[key] !== undefined) return selectedSizesMap[key];
+    if (selectedSizesMap[legacyKey] !== undefined) return selectedSizesMap[legacyKey];
+    return 1; // Default to Regular
+  };
+
+  const handleSelectSize = (childId, dayKey, itemId, sizeId) => {
+    const key = `${childId}_${dayKey}_${itemId}`;
+    setSelectedSizesMap(prev => ({
+      ...prev,
+      [key]: sizeId
+    }));
+  };
+
   const handleOpenAddons = (childId, day, item, currentQty) => {
     const qty = currentQty > 0 ? currentQty : 1;
     if (currentQty === 0) {
       updateQty(childId, day, item.id, 1);
     }
+    const activeSize = getActiveSize(childId, day, item.id);
+    const sizeName = getSizeName(activeSize);
     setAddonModal({
       isOpen: true,
       childId,
       day,
-      item,
+      item: { ...item, activeSize, sizeName, effectivePrice: getPriceBySize(item, activeSize) },
       qty
     });
   };
@@ -815,10 +885,12 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
               if (match) found = match;
             });
           }
+          const itemSize = getActiveSize(childId, cell.fullDateStr || cell.dayName, itemId);
+          const itemPrice = getPriceBySize(found, itemSize);
           selectedItems.push({
             name: found?.name || found?.title || `Meal Option`,
             quantity: qty,
-            price: parseFloat(found?.price || found?.sp || 0)
+            price: itemPrice
           });
         }
       });
@@ -853,10 +925,13 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     const cid = childId ?? 'default';
     const { weekDays } = getWeekDates(weekOffset);
     const activeMenu = parseApiMenuData(apiMenus[childId], weekDays);
+    const todayStr = formatLocalDateToYMD(new Date());
     setMenuQuantities(prev => {
       const childData = prev[cid] ? { ...prev[cid] } : {};
       Object.keys(activeMenu).forEach(day => {
         const dayObj = activeMenu[day];
+        const isPastDate = Boolean(dayObj?.isPast || (dayObj?.fullDateStr && dayObj.fullDateStr < todayStr));
+        if (isPastDate) return;
         const dayKey = dayObj?.fullDateStr || day;
         const firstItem = dayObj?.items[0];
         if (firstItem) {
@@ -868,7 +943,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
       });
       return { ...prev, [cid]: childData };
     });
-    toast.info('Selected first menu item for all days of this week!');
+    toast.info('Selected first menu item for all upcoming days of this week!');
   };
 
   const handleCopyOrder = (targetChildId, sourceStudentName) => {
@@ -996,9 +1071,16 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
             ? parseInt(itemId, 10)
             : (parseInt(String(itemId).replace(/\D/g, ''), 10) || 55);
 
+          const selectedSize = getActiveSize(cid, day, itemId);
+          const itemUnitPrice = getPriceBySize(itemDetails, selectedSize);
+          const sizeLabel = getSizeName(selectedSize);
+
           dayItems.push({
             id: numericItemId,
             quantity: qty,
+            selectedSize: selectedSize,
+            size: selectedSize,
+            price: itemUnitPrice,
             addon: addonList
           });
 
@@ -1016,11 +1098,13 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
             student: studentDisplayName,
             studentName: studentDisplayName,
             childName: studentDisplayName,
-            itemName: itemDetails?.name || 'Lunch Meal',
-            price: parseFloat(itemDetails?.price || 0),
+            itemName: `${itemDetails?.name || 'Lunch Meal'} (${sizeLabel})`,
+            price: itemUnitPrice,
             quantity: qty,
             day: dayName,
             date: dateStr,
+            selectedSize: selectedSize,
+            size: sizeLabel,
             addons: addonNames
           });
         }
@@ -1074,6 +1158,13 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
           [cid]: {}
         }));
         setSelectedAddonsMap(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(k => {
+            if (k.startsWith(`${cid}_`)) delete next[k];
+          });
+          return next;
+        });
+        setSelectedSizesMap(prev => {
           const next = { ...prev };
           Object.keys(next).forEach(k => {
             if (k.startsWith(`${cid}_`)) delete next[k];
@@ -1338,7 +1429,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                               <span style={{ fontSize: 13, fontWeight: 700, color: '#006D77', display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <i className="lni lni-calendar" />
                                 {visibleDays.length > 0
-                                  ? `${visibleDays[0].formattedDate} - ${visibleDays[visibleDays.length - 1].formattedDate} (${weekOffset === 0 ? 'Current Week' : `+${weekOffset} Week`})`
+                                  ? `${visibleDays[0].formattedDate} - ${visibleDays[visibleDays.length - 1].formattedDate} (${weekOffset === 0 ? 'Current Week' : weekOffset > 0 ? `+${weekOffset} Week` : `${weekOffset} Week`})`
                                   : 'No upcoming dates'
                                 }
                               </span>
@@ -1355,13 +1446,8 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                             <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 12 }}>
                               <button
                                 className="carousel-nav-btn"
-                                onClick={() => setWeekOffset(prev => Math.max(0, prev - 1))}
-                                disabled={weekOffset <= 0}
-                                style={{
-                                  opacity: weekOffset <= 0 ? 0.4 : 1,
-                                  cursor: weekOffset <= 0 ? 'not-allowed' : 'pointer'
-                                }}
-                                title={weekOffset <= 0 ? "Past weeks not accessible" : "Previous Week"}
+                                onClick={() => setWeekOffset(prev => prev - 1)}
+                                title="Previous Week"
                               >
                                 <i className="lni lni-chevron-left" />
                               </button>
@@ -1386,84 +1472,179 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                                       {Object.keys(activeWeeklyMenu).map(day => {
                                         const dayObj = activeWeeklyMenu[day];
                                         const dayKey = dayObj.fullDateStr || day;
+                                        const todayStr = formatLocalDateToYMD(new Date());
+                                        const isPastDate = Boolean(dayObj.isPast || (dayObj.fullDateStr && dayObj.fullDateStr < todayStr));
+                                        const dayDateObj = (dayObj.dateObj instanceof Date && !isNaN(dayObj.dateObj.getTime()))
+                                          ? dayObj.dateObj
+                                          : (dayObj.fullDateStr ? parseLocalDate(dayObj.fullDateStr) : new Date());
+
+                                        const cell = {
+                                          dayName: day,
+                                          fullDateStr: dayObj.fullDateStr,
+                                          day: dayDateObj ? dayDateObj.getDate() : undefined,
+                                          dateObj: dayDateObj
+                                        };
+                                        const orderInfo = getOrderForCell(child, childId, cell);
+
                                         return (
-                                          <div className="weekly-day-column" key={dayKey} style={{ border: dayObj.isToday ? '2px solid #006D77' : undefined }}>
-                                            <div className="weekly-day-header" style={{ background: dayObj.isToday ? '#E6F4F5' : undefined }}>
-                                              <span className="day-date" style={{ color: dayObj.isToday ? '#006D77' : undefined, fontWeight: dayObj.isToday ? 800 : undefined }}>
+                                          <div
+                                            className={`weekly-day-column ${isPastDate ? 'past-day-column' : ''}`}
+                                            key={dayKey}
+                                            style={{
+                                              border: dayObj.isToday ? '2px solid #006D77' : undefined,
+                                              opacity: isPastDate && !orderInfo ? 0.8 : 1
+                                            }}
+                                          >
+                                            <div
+                                              className="weekly-day-header"
+                                              style={{
+                                                background: dayObj.isToday ? '#E6F4F5' : (isPastDate ? '#F8FAFC' : undefined),
+                                                borderBottomColor: isPastDate ? '#E2E8F0' : undefined
+                                              }}
+                                            >
+                                              <span className="day-date" style={{ color: dayObj.isToday ? '#006D77' : (isPastDate ? '#94A3B8' : undefined), fontWeight: dayObj.isToday ? 800 : undefined }}>
                                                 {dayObj.date}
                                               </span>
-                                              <span className="day-name" style={{ color: dayObj.isToday ? '#006D77' : undefined, fontWeight: dayObj.isToday ? 800 : undefined }}>
+                                              <span className="day-name" style={{ color: dayObj.isToday ? '#006D77' : (isPastDate ? '#64748B' : undefined), fontWeight: dayObj.isToday ? 800 : undefined }}>
                                                 {day} {dayObj.isToday && <span style={{ fontSize: 10, background: '#006D77', color: '#fff', padding: '1px 5px', borderRadius: 4, marginLeft: 4 }}>TODAY</span>}
+                                                {isPastDate && <span style={{ fontSize: 9, background: '#E2E8F0', color: '#64748B', padding: '1px 5px', borderRadius: 4, marginLeft: 4, fontWeight: 700 }}>PAST</span>}
                                               </span>
-                                              <i className="lni lni-more-alt" style={{ fontSize: 12, color: '#E29578', cursor: 'pointer' }} />
+                                              <i className="lni lni-more-alt" style={{ fontSize: 12, color: isPastDate ? '#CBD5E1' : '#E29578', cursor: 'pointer' }} />
                                             </div>
 
                                             <div className="weekly-day-body">
-                                              {dayObj.items.length === 0 ? (
-                                                <div style={{ padding: '30px 10px', fontSize: 12, color: '#94A3B8', textAlign: 'center' }}>
-                                                  No meals scheduled for {day}.
-                                                </div>
-                                              ) : (
-                                                dayObj.items.map(item => {
-                                                  const currentQty = childQuantities[dayKey]?.[item.id] || (childQuantities[day]?.[item.id] || 0);
-                                                  const isSelected = currentQty > 0;
+                                              {isPastDate ? (
+                                                orderInfo ? (
+                                                  <div
+                                                    className="month-order-card"
+                                                    style={{ cursor: 'default' }}
+                                                    title={`Order placed for ${day}, ${dayObj.fullDateStr || dayObj.date}`}
+                                                  >
+                                                    <div className="month-order-card-header">
+                                                      <span className="month-order-card-title">
+                                                        {orderInfo.totalProducts} product{orderInfo.totalProducts !== 1 ? 's' : ''} – {Math.round(orderInfo.totalPrice)}$
+                                                      </span>
+                                                      <span style={{ fontSize: 10, background: '#006D77', color: '#fff', padding: '2px 7px', borderRadius: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                        <i className="lni lni-checkmark" style={{ fontSize: 9 }} /> PLACED
+                                                      </span>
+                                                    </div>
 
-                                                  return (
-                                                    <div className={`accordion-food-card ${isSelected ? 'selected' : ''}`} key={item.id}>
-                                                      <div className="accordion-food-top">
-                                                        <img src={item.image} alt={item.name} className="accordion-food-img" />
-                                                        <div>
-                                                          <div className="accordion-food-title">{item.name}</div>
-                                                          <div className="accordion-food-size">
-                                                            <span>{item.size}</span>
-                                                            {item.isVegetarian && <span className="tag-dot v-green">V</span>}
-                                                            {item.isVegan && <span className="tag-dot vn-green">Vn</span>}
-                                                            {item.isGlutenFree && <span className="tag-dot g-gold">G</span>}
-                                                            {item.isAllergen && <span className="tag-dot a-red">A</span>}
+                                                    <div className="month-order-item-list">
+                                                      {(orderInfo?.items || []).map((it, i) => (
+                                                        <div key={i} className="month-order-item-row">
+                                                          <span className="month-order-item-qty">{it.quantity}x</span>
+                                                          <span className="month-order-item-name" title={it.name}>{it.name}</span>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                ) : (
+                                                  <div style={{
+                                                    padding: '36px 10px',
+                                                    fontSize: 12,
+                                                    color: '#94A3B8',
+                                                    textAlign: 'center',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: 6
+                                                  }}>
+                                                    <i className="lni lni-calendar" style={{ fontSize: 22, color: '#CBD5E1' }} />
+                                                    <span style={{ fontWeight: 600, color: '#64748B' }}>Past Date</span>
+                                                    <span style={{ fontSize: 11, color: '#94A3B8' }}>No meals ordered</span>
+                                                  </div>
+                                                )
+                                              ) : (
+                                                dayObj.items.length === 0 ? (
+                                                  <div style={{ padding: '30px 10px', fontSize: 12, color: '#94A3B8', textAlign: 'center' }}>
+                                                    No meals scheduled for {day}.
+                                                  </div>
+                                                ) : (
+                                                  dayObj.items.map(item => {
+                                                    const currentQty = childQuantities[dayKey]?.[item.id] || (childQuantities[day]?.[item.id] || 0);
+                                                    const isSelected = currentQty > 0;
+                                                    const activeSize = getActiveSize(childId, dayKey, item.id);
+                                                    const currentPrice = getPriceBySize(item, activeSize);
+                                                    const availableSizes = item.availableSizes && item.availableSizes.length > 0 ? item.availableSizes : [0, 1, 2];
+
+                                                    return (
+                                                      <div className={`accordion-food-card ${isSelected ? 'selected' : ''}`} key={item.id}>
+                                                        <div className="accordion-food-top">
+                                                          <img src={item.image} alt={item.name} className="accordion-food-img" />
+                                                          <div style={{ flex: 1, minWidth: 0 }}>
+                                                            <div className="accordion-food-title" title={item.name}>{item.name}</div>
+                                                            <div className="accordion-food-size">
+                                                              {item.isVegetarian && <span className="tag-dot v-green" title="Vegetarian">V</span>}
+                                                              {item.isVegan && <span className="tag-dot vn-green" title="Vegan">Vn</span>}
+                                                              {item.isGlutenFree && <span className="tag-dot g-gold" title="Gluten Free">G</span>}
+                                                              {item.isAllergen && <span className="tag-dot a-red" title="Allergens">A</span>}
+                                                            </div>
                                                           </div>
                                                         </div>
-                                                      </div>
 
-                                                      <div className="accordion-food-bottom">
-                                                        <div className="accordion-food-bottom-left">
-                                                          <div className="accordion-qty-box">
-                                                            <button className="accordion-qty-btn" onClick={() => updateQty(childId, dayKey, item.id, -1)}>-</button>
-                                                            <span className="accordion-qty-val">{currentQty}</span>
-                                                            <button className="accordion-qty-btn" onClick={() => handlePlusClick(childId, dayKey, item, currentQty)}>+</button>
-                                                          </div>
-
-                                                          {/* Addons Pill Button */}
-                                                          {(() => {
-                                                            const hasAddons = isItemAddonAvailable(item);
-                                                            const addonKey = `${childId}_${dayKey}_${item.id}`;
-                                                            const legacyAddonKey = `${childId}_${day}_${item.id}`;
-                                                            const hasSelections = selectedAddonsMap[addonKey] !== undefined || selectedAddonsMap[legacyAddonKey] !== undefined;
-                                                            const activeAddonKey = selectedAddonsMap[addonKey] !== undefined ? addonKey : legacyAddonKey;
-
-                                                            // Only show addon pill if item actually has addons available or selections exist
-                                                            if (!hasAddons && !hasSelections) return null;
-
-                                                            const addonCount = hasSelections
-                                                              ? Object.values(selectedAddonsMap[activeAddonKey] || {}).reduce((sum, list) => sum + (list?.length || 0), 0)
-                                                              : (item.addonsCount !== undefined ? item.addonsCount : (item.addons?.length || item.addon?.length || 0));
-
+                                                        {/* Size Option Selector (Small / Regular / Large) */}
+                                                        <div className="accordion-size-selector">
+                                                          {availableSizes.map(sizeId => {
+                                                            const isSizeActive = activeSize === sizeId;
+                                                            const sizePrice = getPriceBySize(item, sizeId);
                                                             return (
                                                               <button
-                                                                className={`addons-pill-btn ${addonCount <= 0 ? 'add-mode' : ''}`}
-                                                                onClick={() => handleOpenAddons(childId, dayKey, item, currentQty)}
-                                                                title="Manage add-ons"
+                                                                key={sizeId}
+                                                                type="button"
+                                                                className={`size-pill-btn ${isSizeActive ? 'active' : ''}`}
+                                                                onClick={(e) => {
+                                                                  e.stopPropagation();
+                                                                  handleSelectSize(childId, dayKey, item.id, sizeId);
+                                                                }}
+                                                                title={`${getSizeName(sizeId)}: $${sizePrice.toFixed(2)}`}
                                                               >
-                                                                {addonCount > 0 ? `${addonCount} addons` : '+ Addons'}
+                                                                {getSizeName(sizeId)}
                                                               </button>
                                                             );
-                                                          })()}
+                                                          })}
                                                         </div>
 
-                                                        <span className="accordion-food-price">${item.price.toFixed(2)}</span>
+                                                        <div className="accordion-food-bottom">
+                                                          <div className="accordion-food-bottom-left">
+                                                            <div className="accordion-qty-box">
+                                                              <button className="accordion-qty-btn" onClick={() => updateQty(childId, dayKey, item.id, -1)}>-</button>
+                                                              <span className="accordion-qty-val">{currentQty}</span>
+                                                              <button className="accordion-qty-btn" onClick={() => handlePlusClick(childId, dayKey, item, currentQty)}>+</button>
+                                                            </div>
+
+                                                            {/* Addons Pill Button */}
+                                                            {(() => {
+                                                              const hasAddons = isItemAddonAvailable(item);
+                                                              const addonKey = `${childId}_${dayKey}_${item.id}`;
+                                                              const legacyAddonKey = `${childId}_${day}_${item.id}`;
+                                                              const hasSelections = selectedAddonsMap[addonKey] !== undefined || selectedAddonsMap[legacyAddonKey] !== undefined;
+                                                              const activeAddonKey = selectedAddonsMap[addonKey] !== undefined ? addonKey : legacyAddonKey;
+
+                                                              // Only show addon pill if item actually has addons available or selections exist
+                                                              if (!hasAddons && !hasSelections) return null;
+
+                                                              const addonCount = hasSelections
+                                                                ? Object.values(selectedAddonsMap[activeAddonKey] || {}).reduce((sum, list) => sum + (list?.length || 0), 0)
+                                                                : (item.addonsCount !== undefined ? item.addonsCount : (item.addons?.length || item.addon?.length || 0));
+
+                                                              return (
+                                                                <button
+                                                                  className={`addons-pill-btn ${addonCount <= 0 ? 'add-mode' : ''}`}
+                                                                  onClick={() => handleOpenAddons(childId, dayKey, item, currentQty)}
+                                                                  title="Manage add-ons"
+                                                                >
+                                                                  {addonCount > 0 ? `${addonCount} addons` : '+ Addons'}
+                                                                </button>
+                                                              );
+                                                            })()}
+                                                          </div>
+
+                                                          <span className="accordion-food-price">${currentPrice.toFixed(2)}</span>
+                                                        </div>
                                                       </div>
-                                                    </div>
-                                                  );
-                                                })
+                                                    );
+                                                  })
+                                                )
                                               )}
                                             </div>
                                           </div>

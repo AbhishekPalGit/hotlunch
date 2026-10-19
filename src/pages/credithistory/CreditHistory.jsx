@@ -22,17 +22,31 @@ const CreditHistory = () => {
           setAvailableFunds(response.availableFunds);
         }
         if (Array.isArray(response.data)) {
-          const mapped = response.data.map((r, idx) => ({
-            id: r.orderId ? `#${r.orderId}` : `#${r.id || idx + 1}`,
-            amount: parseFloat(r.amt) || 0,
-            displayAmount: r.displayAmount || `$${r.amt || '0.00'}`,
-            type: (r.typeName || 'CREDIT').toUpperCase(),
-            student: r.student || '--',
-            date: r.date || r.createdDate || '--',
-            balance: parseFloat(r.balance) || 0,
-            notes: r.notes || r.note || '--',
-            status: r.status || 'SUCCESS'
-          }));
+          const mapped = response.data.map((r, idx) => {
+            const rawType = String(r.typeName || r.type || '').toUpperCase();
+            const isDebit = (
+              r.type === 1 ||
+              r.type === '1' ||
+              rawType === 'DEBIT' ||
+              rawType.includes('DEBIT') ||
+              String(r.displayAmount || '').startsWith('-') ||
+              parseFloat(r.amt) < 0
+            );
+            const parsedAmt = Math.abs(parseFloat(r.amt) || 0);
+
+            return {
+              id: r.orderId ? `#${r.orderId}` : `#${r.id || idx + 1}`,
+              amount: isDebit ? -parsedAmt : parsedAmt,
+              isDebit,
+              displayAmount: r.displayAmount || `${isDebit ? '-' : '+'}$${parsedAmt.toFixed(2)}`,
+              type: isDebit ? 'DEBIT' : 'CREDIT',
+              student: r.student || '--',
+              date: r.date || r.createdDate || '--',
+              balance: parseFloat(r.balance) || 0,
+              notes: r.notes || r.note || '--',
+              status: r.status || 'SUCCESS'
+            };
+          });
           setRecords(mapped);
         }
       }
@@ -144,8 +158,8 @@ const CreditHistory = () => {
                 <tr key={r.id}>
                   <td><span className="link-id">{r.id}</span></td>
                   <td>
-                    <span style={{ fontWeight: 700, color: r.amount >= 0 ? '#22A06B' : '#E54A4A' }}>
-                      {r.amount >= 0 ? '+' : ''}${Math.abs(r.amount).toFixed(2)}
+                    <span style={{ fontWeight: 700, color: r.isDebit ? '#E54A4A' : '#22A06B' }}>
+                      {r.isDebit ? '-' : '+'}${Math.abs(r.amount).toFixed(2)}
                     </span>
                   </td>
                   <td>{typeBadge(r.type)}</td>

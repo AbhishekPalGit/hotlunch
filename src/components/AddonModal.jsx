@@ -85,6 +85,11 @@ export default function AddonModal({
                 <div className="addon-item-content">
                   <div className="addon-item-heading">
                     <span>{item.name}</span>
+                    {item.sizeName && (
+                      <span style={{ fontSize: 11, background: '#E6F4F5', color: '#006D77', padding: '1px 6px', borderRadius: 4, fontWeight: 700, marginLeft: 6 }}>
+                        {item.sizeName}
+                      </span>
+                    )}
                     <span style={{ color: '#006D77', fontWeight: 700, marginLeft: 2 }}>+</span>
                   </div>
 

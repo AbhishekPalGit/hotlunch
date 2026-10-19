@@ -87,9 +87,9 @@ const CreditHistory = () => {
                 <td style={{ fontWeight: '600', color: 'var(--primary)' }}>#{item.id}</td>
                 <td style={{ 
                   fontWeight: '600',
-                  color: item.type === 'Credit' ? 'var(--success)' : 'var(--error)'
+                  color: String(item.type || '').toLowerCase() === 'credit' ? 'var(--success)' : 'var(--error)'
                 }}>
-                  {item.type === 'Credit' ? '+' : '-'}${item.amount.toFixed(2)}
+                  {String(item.type || '').toLowerCase() === 'credit' ? '+' : '-'}${Math.abs(Number(item.amount || 0)).toFixed(2)}
                 </td>
                 <td>
                   <span className={`badge ${item.type === 'Credit' ? 'badge-success' : 'badge-info'}`}>
