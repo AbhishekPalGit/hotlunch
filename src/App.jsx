@@ -273,6 +273,8 @@ function App() {
         } />
         <Route path="children" element={<ChildrenPage {...sharedProps} />} />
         <Route path="myorders" element={<MyOrders {...sharedProps} />} />
+        <Route path="myorders/:orderId" element={<MyOrders {...sharedProps} />} />
+        <Route path="invoice/:orderId" element={<MyOrders {...sharedProps} />} />
         <Route path="shoppingcart" element={<ShoppingCart {...sharedProps} />} />
         <Route path="checkout" element={<Checkout {...sharedProps} />} />
         <Route path="credithistory" element={<CreditHistory />} />

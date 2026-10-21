@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { getOrdersApi, cancelOrderApi } from '../../services/api';
 import { ShimmerTable } from '../../components/Shimmer';
-
+import Invoice from './Invoice';
 
 const MyOrders = () => {
+  const { orderId } = useParams();
+  const navigate = useNavigate();
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -48,6 +53,12 @@ const MyOrders = () => {
     fetchOrders();
   }, []);
 
+  const handleOpenInvoice = (order) => {
+    const rawId = order.rawId || String(order.id).replace(/^#/, '');
+    setSelectedOrderId(rawId);
+    navigate(`/myorders/${rawId}`, { state: { orderId: rawId, order } });
+  };
+
   const handleCancel = async (rawId) => {
     if (!window.confirm('Are you sure you want to cancel this order?')) return;
     try {
@@ -73,6 +84,20 @@ const MyOrders = () => {
     }
   };
 
+  // If orderId URL param or selectedOrderId is present, render Invoice
+  const currentActiveOrderId = orderId || selectedOrderId;
+  if (currentActiveOrderId) {
+    return (
+      <Invoice
+        orderId={currentActiveOrderId}
+        onBack={() => {
+          setSelectedOrderId(null);
+          navigate('/myorders');
+        }}
+      />
+    );
+  }
+
   const filtered = orders.filter(o =>
     String(o.id || '').toLowerCase().includes(orderIdFilter.toLowerCase()) &&
     String(o.student || '').toLowerCase().includes(studentFilter.toLowerCase()) &&
@@ -90,7 +115,7 @@ const MyOrders = () => {
           <i className="lni lni-box-cart" style={{ fontSize: 22 }} />
           My Orders
         </h1>
-        <p className="page-subtitle">Review, pay, or modify your children's orders.</p>
+        <p className="page-subtitle">Review, pay, or view invoice receipts for your children's orders.</p>
       </div>
 
       {/* Filters */}
@@ -157,7 +182,16 @@ const MyOrders = () => {
             ) : (
               paginated.map(o => (
                 <tr key={o.id}>
-                  <td><span className="link-id">{o.id}</span></td>
+                  <td>
+                    <span
+                      className="link-id"
+                      style={{ cursor: 'pointer', fontWeight: 600, color: '#006D77' }}
+                      onClick={() => handleOpenInvoice(o)}
+                      title="View Order Invoice"
+                    >
+                      {o.id}
+                    </span>
+                  </td>
                   <td>{o.student}</td>
                   <td>{o.menu}</td>
                   <td>{o.orderOn}</td>
@@ -167,9 +201,30 @@ const MyOrders = () => {
                   <td><strong>${o.amountPaid.toFixed(2)}</strong></td>
                   <td>{statusBadge(o.status)}</td>
                   <td>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenInvoice(o)}
+                        style={{
+                          background: '#E6F4F5',
+                          border: '1px solid #BEE3E8',
+                          color: '#006D77',
+                          borderRadius: 6,
+                          padding: '4px 10px',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                        title="View Order Invoice"
+                      >
+                        <i className="lni lni-file" style={{ fontSize: 11 }} /> Invoice
+                      </button>
                       {o.canCancel && (
                         <button
+                          type="button"
                           onClick={() => handleCancel(o.rawId)}
                           style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#EF4444', borderRadius: 6, padding: '4px 8px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
                         >

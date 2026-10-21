@@ -11,6 +11,7 @@ import {
   deleteCartItemApi,
 } from '../../services/api';
 import { ShimmerCart } from '../../components/Shimmer';
+import { exportInvoice } from '../../utils/invoiceGenerator';
 
 const PAYMENT_METHODS_OPTIONS = [
   // Column 1
@@ -270,8 +271,19 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
   };
 
   const handleDownloadInvoice = (order) => {
-    toast.info(`Preparing print preview for Order ${order.orderNumber}...`);
-    window.print();
+    try {
+      const cleanId = String(order.orderNumber || order.orderId || order.id || 'receipt').replace(/^#/, '');
+      exportInvoice(order, { download: true, print: true });
+      toast.success(`Invoice #${cleanId} downloaded! Print / Save as PDF prompt opened.`);
+    } catch (err) {
+      console.error('Error generating invoice from checkout:', err);
+      const targetId = order.orderNumber || order.orderId || order.id || order.rawId;
+      if (targetId) {
+        navigate(`/myorders/${targetId}`, { state: { orderId: targetId, order } });
+      } else {
+        window.print();
+      }
+    }
   };
 
   /* ── Calculations ── */

@@ -9,6 +9,7 @@
 }
 
 :root {
+  color-scheme: light;
   --primary: #006D77;
   --primary-light: #006D771A;
   --primary-mid: #006D7730;
@@ -2465,20 +2466,56 @@ body,
 }
 
 @media print {
-  body * {
-    visibility: hidden;
+  :root, html, body {
+    color-scheme: light !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #1F2937 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
-  .lunch-cards-grid,
-  .lunch-cards-grid * {
-    visibility: visible;
+
+  .sidebar,
+  .navbar,
+  .hamburger-btn,
+  .modal-overlay,
+  .navbar-actions,
+  .user-welcome,
+  .invoice-back-nav,
+  .invoice-header-actions,
+  .invoice-bottom-actions,
+  .invoice-page-footer,
+  .lunch-card-filter-card,
+  .lunch-placeholder-state,
+  .btn-invoice-back,
+  .btn-print,
+  .btn-download {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
+
+  .app-layout,
+  .main-wrapper,
+  .page-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    width: 100% !important;
+    min-height: auto !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+  }
+
   .lunch-cards-grid {
-    position: absolute;
-    left: 0;
-    top: 0;
     width: 100%;
     margin-top: 0;
   }
+
   .lunch-ticket-card {
     page-break-inside: avoid;
     break-inside: avoid;
