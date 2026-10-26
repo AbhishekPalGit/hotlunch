@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { getOrdersApi, cancelOrderApi } from '../../services/api';
+import { getOrdersApi, cancelOrderApi, getOrderDetailsApi } from '../../services/api';
+import { downloadInvoicePdf } from '../../utils/invoiceGenerator';
 import { ShimmerTable } from '../../components/Shimmer';
 import Invoice from './Invoice';
 
@@ -12,6 +13,7 @@ const MyOrders = () => {
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [downloadingId, setDownloadingId] = useState(null);
 
   const [orderIdFilter, setOrderIdFilter] = useState('');
   const [studentFilter, setStudentFilter] = useState('');
@@ -71,6 +73,45 @@ const MyOrders = () => {
       }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Error cancelling order');
+    }
+  };
+
+  const handleDownloadPdf = async (o) => {
+    const rawId = o.rawId || String(o.id).replace(/^#/, '');
+    setDownloadingId(rawId);
+    try {
+      toast.info(`Generating Invoice #${rawId} PDF...`, { autoClose: 1500 });
+      let orderData = null;
+      try {
+        const res = await getOrderDetailsApi(rawId);
+        if (res && res.data) {
+          orderData = res.data;
+        }
+      } catch (e) {
+        console.warn('Could not fetch full order details for PDF:', e);
+      }
+
+      if (!orderData) {
+        orderData = {
+          order: {
+            id: rawId,
+            studentName: o.student,
+            menuName: o.menu,
+            createdDate: o.orderOn,
+            orderAmount: o.amount,
+            amountPaid: o.amountPaid,
+            status: o.status
+          }
+        };
+      }
+
+      await downloadInvoicePdf(orderData, `Invoice_Order_${rawId}.pdf`);
+      toast.success(`Invoice #${rawId} downloaded as PDF!`);
+    } catch (err) {
+      console.error('Quick download PDF error:', err);
+      toast.error('Failed to download invoice PDF');
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -221,6 +262,32 @@ const MyOrders = () => {
                         title="View Order Invoice"
                       >
                         <i className="lni lni-file" style={{ fontSize: 11 }} /> Invoice
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadPdf(o)}
+                        disabled={downloadingId === o.rawId}
+                        style={{
+                          background: '#F0FDF4',
+                          border: '1px solid #BBF7D0',
+                          color: '#166534',
+                          borderRadius: 6,
+                          padding: '4px 8px',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                        title="Download Invoice PDF"
+                      >
+                        {downloadingId === o.rawId ? (
+                          <span className="btn-spinner" style={{ width: 11, height: 11, borderWidth: 2, borderTopColor: '#166534', borderColor: '#BBF7D0' }} />
+                        ) : (
+                          <i className="lni lni-download" style={{ fontSize: 11 }} />
+                        )}
+                        PDF
                       </button>
                       {o.canCancel && (
                         <button

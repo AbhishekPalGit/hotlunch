@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { downloadInvoicePdf } from '../utils/invoiceGenerator';
 
 const MyOrders = ({ activeTab, setActiveTab }) => {
   const [viewState, setViewState] = useState('list'); // 'list' or 'invoice'
@@ -189,7 +190,11 @@ const MyOrders = ({ activeTab, setActiveTab }) => {
                 <button style={styles.circleBtn} onClick={() => window.print()} title="Print Order">
                   <i className="lni lni-printer"></i>
                 </button>
-                <button style={styles.circleBtn} onClick={() => alert('Download PDF')} title="Download PDF">
+                <button
+                  style={styles.circleBtn}
+                  onClick={() => downloadInvoicePdf(selectedOrder, `Invoice_Order_${String(selectedOrder.id || 'receipt').replace(/^#/, '')}.pdf`)}
+                  title="Download PDF"
+                >
                   <i className="lni lni-file-download"></i>
                 </button>
               </div>

@@ -1,9 +1,11 @@
 /**
  * Invoice Generator Utility
- * Produces pixel-perfect, light-scheme, standalone HTML invoice receipts
- * and handles direct download and isolated iframe printing.
+ * Produces pixel-perfect, light-scheme, standalone HTML and PDF invoice receipts
+ * and handles direct PDF download and isolated iframe printing.
  * Matches Mockup Page 14 parity.
  */
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 function parseLocalDate(dateInput) {
   if (!dateInput) return null;
@@ -567,7 +569,156 @@ export function generateInvoiceHtml(inputData) {
 }
 
 /**
- * Downloads a standalone .html receipt file
+ * Downloads an invoice directly as a pixel-perfect, vector/retina PDF file
+ * Accepts:
+ * - A DOM element (e.g. #printable-invoice-card)
+ * - An HTML string (e.g. from generateInvoiceHtml)
+ * - An order/invoice data object
+ */
+export async function downloadInvoicePdf(input, filename = 'Invoice.pdf') {
+  if (!input) return;
+
+  let cleanupElement = null;
+  let targetElement = null;
+
+  try {
+    // 1. If input is a DOM element
+    if (typeof HTMLElement !== 'undefined' && input instanceof HTMLElement) {
+      const clone = input.cloneNode(true);
+      const headerActions = clone.querySelector('.invoice-header-actions');
+      if (headerActions) headerActions.remove();
+      const bottomActions = clone.querySelector('.invoice-bottom-actions');
+      if (bottomActions) bottomActions.remove();
+
+      clone.style.position = 'fixed';
+      clone.style.top = '0';
+      clone.style.left = '-9999px';
+      clone.style.width = '960px';
+      clone.style.maxWidth = '960px';
+      clone.style.minWidth = '960px';
+      clone.style.background = '#ffffff';
+      clone.style.boxSizing = 'border-box';
+      clone.style.zIndex = '-9999';
+      clone.style.boxShadow = 'none';
+
+      document.body.appendChild(clone);
+      targetElement = clone;
+      cleanupElement = clone;
+    } else {
+      // 2. If input is HTML string or data object
+      let htmlString = '';
+      if (typeof input === 'string') {
+        htmlString = input;
+      } else if (typeof input === 'object') {
+        htmlString = generateInvoiceHtml(input);
+      }
+
+      if (!htmlString) return;
+
+      const container = document.createElement('div');
+      container.style.position = 'fixed';
+      container.style.top = '0';
+      container.style.left = '-9999px';
+      container.style.width = '960px';
+      container.style.maxWidth = '960px';
+      container.style.minWidth = '960px';
+      container.style.background = '#ffffff';
+      container.style.zIndex = '-9999';
+      container.innerHTML = htmlString;
+
+      document.body.appendChild(container);
+      cleanupElement = container;
+      targetElement = container.querySelector('.invoice-card') || container;
+    }
+
+    if (document.fonts && document.fonts.ready) {
+      try {
+        await document.fonts.ready;
+      } catch (e) {}
+    }
+
+    // Small delay to allow layout calculations to settle
+    await new Promise(resolve => setTimeout(resolve, 80));
+
+    // Capture target element as high-DPI retina canvas
+    const canvas = await html2canvas(targetElement, {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      windowWidth: 1024
+    });
+
+    let pdfFilename = filename || 'Invoice.pdf';
+    if (!pdfFilename.toLowerCase().endsWith('.pdf')) {
+      pdfFilename = pdfFilename.replace(/\.html?$/i, '') + '.pdf';
+    }
+
+    // A4 dimensions: 210 x 297 mm
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true
+    });
+
+    const marginX = 10;
+    const marginY = 10;
+    const contentWidthMm = 190;
+    const pageMaxHeightMm = 277;
+
+    const totalHeightMm = (canvas.height / canvas.width) * contentWidthMm;
+
+    if (totalHeightMm <= pageMaxHeightMm) {
+      // Single page PDF
+      const imgData = canvas.toDataURL('image/jpeg', 0.98);
+      pdf.addImage(imgData, 'JPEG', marginX, marginY, contentWidthMm, totalHeightMm, undefined, 'FAST');
+    } else {
+      // Multi-page PDF: cleanly slice canvas chunks
+      const pageHeightPx = Math.floor((pageMaxHeightMm / contentWidthMm) * canvas.width);
+      let sy = 0;
+      let pageIdx = 0;
+
+      while (sy < canvas.height) {
+        const sHeight = Math.min(pageHeightPx, canvas.height - sy);
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sHeight;
+
+        const ctx = pageCanvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(
+          canvas,
+          0, sy, canvas.width, sHeight,
+          0, 0, canvas.width, sHeight
+        );
+
+        const pageImgData = pageCanvas.toDataURL('image/jpeg', 0.98);
+        const sliceHeightMm = (sHeight / canvas.width) * contentWidthMm;
+
+        if (pageIdx > 0) {
+          pdf.addPage();
+        }
+
+        pdf.addImage(pageImgData, 'JPEG', marginX, marginY, contentWidthMm, sliceHeightMm, undefined, 'FAST');
+
+        sy += pageHeightPx;
+        pageIdx++;
+      }
+    }
+
+    pdf.save(pdfFilename);
+    return true;
+  } finally {
+    if (cleanupElement && cleanupElement.parentNode) {
+      cleanupElement.parentNode.removeChild(cleanupElement);
+    }
+  }
+}
+
+/**
+ * Downloads a standalone .html receipt file (retained for backward compatibility)
  */
 export function downloadInvoiceHtml(htmlContent, filename = 'Invoice.html') {
   if (!htmlContent) return;
@@ -641,18 +792,19 @@ export function printInvoiceHtml(htmlContent) {
 }
 
 /**
- * Convenience method to export an invoice: downloads the HTML receipt & opens print/Save as PDF
+ * Convenience method to export an invoice: downloads the PDF receipt & optionally opens print
  */
-export function exportInvoice(data, { download = true, print = true } = {}) {
-  const html = generateInvoiceHtml(data);
-  const cleanId = String(data.order?.id || data.orderId || data.id || 'receipt').replace(/^#/, '');
-  const filename = `Invoice_Order_${cleanId}.html`;
+export async function exportInvoice(data, { download = true, print = false, filename } = {}) {
+  const cleanId = String(data?.order?.id || data?.orderId || data?.orderNumber || data?.id || 'receipt').replace(/^#/, '');
+  const pdfFilename = filename || `Invoice_Order_${cleanId}.pdf`;
 
   if (download) {
-    downloadInvoiceHtml(html, filename);
+    await downloadInvoicePdf(data, pdfFilename);
   }
   if (print) {
+    const html = generateInvoiceHtml(data);
     printInvoiceHtml(html);
   }
-  return html;
+  return true;
 }
+

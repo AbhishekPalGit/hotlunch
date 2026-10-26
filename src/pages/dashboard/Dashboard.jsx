@@ -621,7 +621,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     }));
   };
 
-  const handleOpenAddons = (childId, day, item, currentQty) => {
+  const handleOpenAddons = (childId, day, item, currentQty = 1) => {
     const qty = currentQty > 0 ? currentQty : 1;
     if (currentQty === 0) {
       updateQty(childId, day, item.id, 1);
@@ -749,7 +749,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     });
   };
 
-  // Check if item has add-ons available
+  // Check if item has add-ons available from API
   const isItemAddonAvailable = (item) => {
     if (!item) return false;
     if (Array.isArray(item.addons) && item.addons.length > 0) return true;
@@ -759,9 +759,13 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     return false;
   };
 
-  // Plus button click: increments quantity
-  const handlePlusClick = (childId, day, item) => {
+  // Plus button click: increments quantity and automatically pops up addon modal if item has addons
+  const handlePlusClick = (childId, day, item, currentQty = 0) => {
+    const nextQty = (currentQty || 0) + 1;
     updateQty(childId, day, item.id, 1);
+    if (isItemAddonAvailable(item)) {
+      handleOpenAddons(childId, day, item, nextQty);
+    }
   };
 
   const handleOpenWeekForDay = (targetDate) => {

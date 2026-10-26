@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { getOrderDetailsApi, cancelOrderApi } from '../../services/api';
+import { downloadInvoicePdf } from '../../utils/invoiceGenerator';
 import './Invoice.css';
 
 function parseLocalDate(dateInput) {
@@ -58,6 +59,7 @@ const Invoice = ({ orderId: propOrderId, onBack }) => {
   const [loading, setLoading] = useState(true);
   const [invoiceData, setInvoiceData] = useState(null);
   const [cancelling, setCancelling] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -625,30 +627,26 @@ const Invoice = ({ orderId: propOrderId, onBack }) => {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    const invoiceNum = orderNumber || cleanOrderId || 'receipt';
+    const filename = `Invoice_Order_${invoiceNum}.pdf`;
+
     try {
-      const printableContent = getPrintableHtml();
-      const filename = `Invoice_Order_${orderNumber || cleanOrderId || 'receipt'}.html`;
-
-      if (printableContent) {
-        // Download full standalone HTML receipt
-        const blob = new Blob([printableContent], { type: 'text/html;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        toast.success(`Invoice #${orderNumber || cleanOrderId} receipt downloaded!`);
+      const invoiceElement = document.getElementById('printable-invoice-card');
+      if (invoiceElement) {
+        await downloadInvoicePdf(invoiceElement, filename);
+      } else {
+        await downloadInvoicePdf(invoiceData, filename);
       }
-
-      // Also trigger print preview with "Save as PDF"
-      handlePrint();
+      toast.success(`Invoice #${invoiceNum} downloaded as PDF!`);
     } catch (err) {
       console.error('Download error:', err);
+      toast.error('Could not generate PDF directly, opening print preview as fallback.');
       handlePrint();
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -717,9 +715,14 @@ const Invoice = ({ orderId: propOrderId, onBack }) => {
               type="button"
               className="invoice-action-btn btn-folder"
               onClick={handleDownload}
-              title="Download Invoice / Save PDF"
+              disabled={downloading}
+              title="Download Invoice (PDF)"
             >
-              <i className="lni lni-download" />
+              {downloading ? (
+                <span className="btn-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+              ) : (
+                <i className="lni lni-download" />
+              )}
             </button>
             <button
               type="button"

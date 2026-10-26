@@ -270,11 +270,11 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
     }
   };
 
-  const handleDownloadInvoice = (order) => {
+  const handleDownloadInvoice = async (order) => {
     try {
       const cleanId = String(order.orderNumber || order.orderId || order.id || 'receipt').replace(/^#/, '');
-      exportInvoice(order, { download: true, print: true });
-      toast.success(`Invoice #${cleanId} downloaded! Print / Save as PDF prompt opened.`);
+      await exportInvoice(order, { download: true, print: false });
+      toast.success(`Invoice #${cleanId} downloaded as PDF!`);
     } catch (err) {
       console.error('Error generating invoice from checkout:', err);
       const targetId = order.orderNumber || order.orderId || order.id || order.rawId;

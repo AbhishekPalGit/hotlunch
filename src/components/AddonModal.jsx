@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 
-export const DEFAULT_ADDONS = [];
-
 export default function AddonModal({
   isOpen,
   onClose,
@@ -16,13 +14,13 @@ export default function AddonModal({
     if (isOpen) {
       setSelectedMap(initialSelections && typeof initialSelections === 'object' ? JSON.parse(JSON.stringify(initialSelections)) : {});
     }
-  }, [isOpen]);
+  }, [isOpen, initialSelections]);
 
   if (!isOpen || !item) return null;
 
   const count = Math.max(1, parseInt(qty, 10) || 1);
 
-  // Parse available addons (supports both item.addons and item.addon from backend)
+  // Parse available addons (supports both item.addons and item.addon from API)
   const rawList = Array.isArray(item.addons) && item.addons.length > 0
     ? item.addons
     : (Array.isArray(item.addon) && item.addon.length > 0 ? item.addon : []);
@@ -37,6 +35,8 @@ export default function AddonModal({
       price: parseFloat(a.price ?? a.sp ?? 0)
     };
   });
+
+  if (availableAddons.length === 0) return null;
 
   const toggleAddon = (instIdx, addonId) => {
     setSelectedMap(prev => {
