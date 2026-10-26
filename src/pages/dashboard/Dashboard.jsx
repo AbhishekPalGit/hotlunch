@@ -1193,6 +1193,94 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
     }
   };
 
+  // Dynamic calculation for a child's active meal order & cart total
+  const calculateChildTotal = (child, childId) => {
+    const cid = childId ?? 'default';
+    const childSelections = menuQuantities[cid] || menuQuantities['default'] || {};
+    let sessionTotal = 0;
+
+    const findItemInMenu = (menuObj, itemId) => {
+      if (!menuObj) return null;
+      const strId = String(itemId);
+      if (Array.isArray(menuObj.config)) {
+        for (const block of menuObj.config) {
+          const list = block.itemsArray || block.items || [];
+          const found = list.find(i => String(i.id || i.product_id || i.productId) === strId);
+          if (found) return formatMenuItem({ ...found, mcid: block.id || found.mcid });
+        }
+      }
+      if (Array.isArray(menuObj.items)) {
+        const found = menuObj.items.find(i => String(i.id || i.product_id || i.productId) === strId);
+        if (found) return formatMenuItem(found);
+      }
+      if (Array.isArray(menuObj.menus)) {
+        const found = menuObj.menus.find(i => String(i.id || i.product_id || i.productId) === strId);
+        if (found) return formatMenuItem(found);
+      }
+      if (Array.isArray(menuObj)) {
+        const found = menuObj.find(i => String(i.id || i.product_id || i.productId) === strId);
+        if (found) return formatMenuItem(found);
+      }
+      return null;
+    };
+
+    const getItem = (itemId) => {
+      let found = findItemInMenu(apiMenus[childId] || apiMenus[child?.id], itemId);
+      if (found) return found;
+
+      for (const m of Object.values(apiMenus)) {
+        found = findItemInMenu(m, itemId);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    // 1. Calculate active session meal + addon total
+    Object.keys(childSelections).forEach(day => {
+      const dayItems = childSelections[day] || {};
+      Object.keys(dayItems).forEach(itemId => {
+        const qty = parseInt(dayItems[itemId], 10) || 0;
+        if (qty > 0) {
+          const itemDetails = getItem(itemId);
+          const activeSize = getActiveSize(cid, day, itemId);
+          const unitPrice = getPriceBySize(itemDetails, activeSize);
+          sessionTotal += (unitPrice * qty);
+
+          // Addon pricing
+          const addonKey = `${cid}_${day}_${itemId}`;
+          const legacyAddonKey = `${cid}_${itemId}`;
+          const addonSelections = selectedAddonsMap[addonKey] || selectedAddonsMap[legacyAddonKey] || {};
+          let flatAddonIds = [];
+          if (Array.isArray(addonSelections)) {
+            flatAddonIds = addonSelections;
+          } else if (typeof addonSelections === 'object' && addonSelections !== null) {
+            flatAddonIds = Object.values(addonSelections).flat();
+          }
+
+          if (flatAddonIds.length > 0 && itemDetails) {
+            const itemAddons = Array.isArray(itemDetails.addons) && itemDetails.addons.length > 0
+              ? itemDetails.addons
+              : (Array.isArray(itemDetails.addon) ? itemDetails.addon : []);
+
+            flatAddonIds.forEach(aid => {
+              const matched = itemAddons.find(a => String(a.id) === String(aid));
+              const addonPrice = parseFloat(matched?.price ?? matched?.sp ?? 0);
+              sessionTotal += addonPrice;
+            });
+          }
+        }
+      });
+    });
+
+    if (sessionTotal > 0) {
+      return sessionTotal;
+    }
+
+    // Fallback to child balance / owed / amount fields from summary API if present
+    const fallback = child?.balance ?? child?.amountOwed ?? child?.owed ?? child?.totalAmount ?? child?.amount ?? 0;
+    return parseFloat(fallback || 0);
+  };
+
   const handleNextChild = (currentIndex) => {
     if (currentIndex < children.length - 1) {
       setExpandedChildId(children[currentIndex + 1].id || (currentIndex + 1));
@@ -1271,7 +1359,8 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
               const campus = child.campusName || child.campus || child.campus_rel?.name || child.campusInfo?.name || '--';
               const grade = child.gradeName || child.grade || child.grade_rel?.name || child.gradeInfo?.name || '--';
               const room = child.classroomName || child.classroom || child.classroom_rel?.name || child.className || child.classInfo?.name || '--';
-              const balance = child.balance ?? child.owed ?? '0.00';
+              const childTotal = calculateChildTotal(child, childId);
+              const balance = childTotal;
               const cidKey = childId ?? 'default';
               const childQuantities = menuQuantities[cidKey] || {};
 
@@ -1298,7 +1387,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
                       </div>
 
                       <div className="card-right">
-                        <div className="amount-badge">${parseFloat(balance || 0).toFixed(2)}</div>
+                        <div className="amount-badge">${parseFloat(childTotal || 0).toFixed(2)}</div>
                         <button className="action-icon-btn" title="Expand Menu Accordion" onClick={(e) => { e.stopPropagation(); setExpandedChildId(childId); }}>
                           <i className="lni lni-chevron-down" />
                         </button>
@@ -1399,7 +1488,7 @@ const Dashboard = ({ cartItems = [], setAvailableFunds, setAmountOwed, addToCart
 
                           {/* Balance amount badge */}
                           <div className="amount-badge" style={{ fontSize: 15, whiteSpace: 'nowrap' }}>
-                            ${parseFloat(balance || 0).toFixed(2)}
+                            ${parseFloat(childTotal || 0).toFixed(2)}
                           </div>
 
                           {/* Collapse button */}
