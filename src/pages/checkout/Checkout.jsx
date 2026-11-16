@@ -9,24 +9,11 @@ import {
   getChildrenApi,
   topupCreditApi,
   deleteCartItemApi,
+  getPaymentGatewaysApi,
+  getCreditBalanceApi,
 } from '../../services/api';
 import { ShimmerCart } from '../../components/Shimmer';
 import { exportInvoice } from '../../utils/invoiceGenerator';
-
-const PAYMENT_METHODS_OPTIONS = [
-  // Column 1
-  'Use Available Credit',
-  'Use Available Credit',
-  'Use Available Credit',
-  'Use Available Credit',
-  'Use Available Credit',
-  // Column 2
-  'Use Available Credit',
-  'Use Available Credit',
-  'Use Available Credit',
-  'Use Available Credit',
-  'Use Available Credit'
-];
 
 const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refreshCart, refreshUserData }) => {
   const navigate = useNavigate();
@@ -38,7 +25,23 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
-  const [selectedMethodIdx, setSelectedMethodIdx] = useState(0);
+
+  // Available Gateways and Credits state
+  const [gateways, setGateways] = useState([]);
+  const [loadingGateways, setLoadingGateways] = useState(true);
+  const [selectedGateway, setSelectedGateway] = useState(null);
+  const [localCredits, setLocalCredits] = useState(null);
+
+  // Direct card details state (for card gateways when amountToPay > 0)
+  const [cardDetails, setCardDetails] = useState({
+    cardNumber: '',
+    expMonth: '',
+    expYear: '',
+    cvv: '',
+    nameOnCard: '',
+    billingZip: '',
+  });
+  const [saveCard, setSaveCard] = useState(false);
 
   // Success receipt modal
   const [showSuccess, setShowSuccess] = useState(false);
@@ -52,6 +55,233 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
   // Delete Confirmation Modal
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, order: null });
   const [deleting, setDeleting] = useState(false);
+
+  // Pre-checkout validation state
+  const [invalidOrderIds, setInvalidOrderIds] = useState([]);
+  const [validationModal, setValidationModal] = useState({ isOpen: false, message: '', invalidOrders: [] });
+  const [removingInvalid, setRemovingInvalid] = useState(false);
+
+  // Validate active orders against deadlines, past dates & limits
+  const runPreCheckoutValidation = async (activeOrderIds) => {
+    try {
+      const res = await validateOrdersApi({ orderIds: activeOrderIds });
+      if (res && (res.valid === false || res.status === 'failure' || (Array.isArray(res.invalidOrders) && res.invalidOrders.length > 0))) {
+        const invIds = (res.invalidOrders || []).map(o => o.orderId).filter(Boolean);
+        setInvalidOrderIds([...new Set(invIds)]);
+        return {
+          valid: false,
+          message: res.message || 'One or more items or orders could not be validated for checkout.',
+          invalidOrders: res.invalidOrders || [],
+        };
+      }
+      setInvalidOrderIds([]);
+      return { valid: true };
+    } catch (err) {
+      const errData = err.response?.data;
+      if (errData && (errData.valid === false || errData.status === 'failure' || errData.invalidOrders)) {
+        const invIds = (errData.invalidOrders || []).map(o => o.orderId).filter(Boolean);
+        setInvalidOrderIds([...new Set(invIds)]);
+        return {
+          valid: false,
+          message: errData.message || 'One or more items or orders could not be validated for checkout.',
+          invalidOrders: errData.invalidOrders || [],
+        };
+      }
+      return { valid: true };
+    }
+  };
+
+  const handleRemoveInvalidOrders = async () => {
+    const idsToRemove = validationModal.invalidOrders && validationModal.invalidOrders.length > 0
+      ? [...new Set(validationModal.invalidOrders.map(o => o.orderId).filter(Boolean))]
+      : invalidOrderIds;
+
+    if (idsToRemove.length === 0) {
+      setValidationModal({ isOpen: false, message: '', invalidOrders: [] });
+      return;
+    }
+
+    setRemovingInvalid(true);
+    try {
+      await Promise.allSettled(idsToRemove.map(id => deleteCartItemApi(id)));
+      toast.success(`${idsToRemove.length === 1 ? 'Expired order' : 'Expired orders'} removed from cart.`);
+      setValidationModal({ isOpen: false, message: '', invalidOrders: [] });
+      setInvalidOrderIds([]);
+      if (refreshCart) refreshCart();
+      await loadCartOrders();
+    } catch (err) {
+      console.error('Error removing invalid orders:', err);
+      toast.error('Failed to remove expired orders.');
+    } finally {
+      setRemovingInvalid(false);
+    }
+  };
+
+  // Fetch available payment gateways and credit balance
+  const fetchGatewaysAndCredits = async (targetCampusId) => {
+    setLoadingGateways(true);
+    try {
+      const [gatewaysRes, creditRes] = await Promise.allSettled([
+        getPaymentGatewaysApi(targetCampusId),
+        getCreditBalanceApi(),
+      ]);
+
+      let foundCredits = null;
+
+      // Check credit balance response
+      if (creditRes.status === 'fulfilled' && creditRes.value) {
+        const cb = creditRes.value;
+        const bal = cb.availableFunds ?? cb.balance ?? cb.userCredit ?? cb.data?.availableFunds ?? cb.data?.balance ?? cb.data?.userCredit;
+        if (bal !== undefined && bal !== null) {
+          const parsed = parseFloat(String(bal).replace(/[^0-9.-]+/g, ''));
+          if (!isNaN(parsed)) foundCredits = parsed;
+        }
+      }
+
+      // Check gateways response
+      let rawGateways = [];
+      if (gatewaysRes.status === 'fulfilled' && gatewaysRes.value) {
+        const gwData = gatewaysRes.value;
+        const gwCredit = gwData.userCredit ?? gwData.availableCredits ?? gwData.data?.userCredit ?? gwData.data?.availableCredits;
+        if (gwCredit !== undefined && gwCredit !== null && foundCredits === null) {
+          const parsed = parseFloat(String(gwCredit).replace(/[^0-9.-]+/g, ''));
+          if (!isNaN(parsed)) foundCredits = parsed;
+        }
+
+        if (Array.isArray(gwData)) {
+          rawGateways = gwData;
+        } else if (Array.isArray(gwData.data)) {
+          rawGateways = gwData.data;
+        } else if (Array.isArray(gwData.gateways)) {
+          rawGateways = gwData.gateways;
+        } else if (gwData.data && Array.isArray(gwData.data.gateways)) {
+          rawGateways = gwData.data.gateways;
+        } else if (gwData.data && Array.isArray(gwData.data.items)) {
+          rawGateways = gwData.data.items;
+        }
+      }
+
+      if (foundCredits !== null) {
+        setLocalCredits(foundCredits);
+        if (setAvailableFunds) setAvailableFunds(foundCredits);
+      }
+
+      // Normalize gateways list
+      const normalized = rawGateways.map((gw, idx) => {
+        const id = gw.id ?? gw.pgId ?? gw.gatewayId ?? (idx + 1);
+        const rawName = String(gw.name || gw.title || gw.pgTitle || gw.gatewayName || '').trim();
+        const lowerName = rawName.toLowerCase();
+        const isWallet = id === 7 || lowerName.includes('wallet') || lowerName.includes('credit');
+        const isPayPal = id === 8 || lowerName.includes('paypal');
+        const isCard = id === 4 || id === 14 || id === 11 || lowerName.includes('auth') || lowerName.includes('card') || lowerName.includes('clover');
+
+        let friendlyName = rawName;
+        let icon = 'lni lni-credit-cards';
+        let methodType = 'card';
+
+        if (isWallet) {
+          friendlyName = 'Use Available Credit';
+          icon = 'lni lni-wallet';
+          methodType = 'credits';
+        } else if (isPayPal) {
+          friendlyName = rawName || 'PayPal Express';
+          icon = 'lni lni-paypal';
+          methodType = 'paypal';
+        } else if (id === 4 || lowerName.includes('auth')) {
+          friendlyName = rawName || 'Authorize.Net (Credit Card)';
+          icon = 'lni lni-credit-cards';
+          methodType = 'card';
+        } else if (id === 14 || lowerName.includes('cardconnect')) {
+          friendlyName = rawName || 'CardConnect (Credit Card)';
+          icon = 'lni lni-credit-cards';
+          methodType = 'card';
+        } else if (id === 11 || lowerName.includes('clover')) {
+          friendlyName = rawName || 'Clover (Credit Card)';
+          icon = 'lni lni-credit-cards';
+          methodType = 'card';
+        } else if (!friendlyName) {
+          friendlyName = `Gateway #${id}`;
+        }
+
+        const coFeeEnabled = Boolean(gw.coFeeEnabled || gw.feeEnabled);
+        const coFeeType = gw.coFeeType !== undefined ? parseInt(gw.coFeeType, 10) : 1;
+        const coFee = parseFloat(gw.coFee || gw.fee || 0);
+
+        return {
+          id,
+          name: friendlyName,
+          rawName,
+          isWallet,
+          isPayPal,
+          isCard,
+          methodType,
+          icon,
+          coFeeEnabled,
+          coFeeType,
+          coFee,
+          supportsSavedCards: Boolean(gw.supportsSavedCards),
+          raw: gw,
+        };
+      });
+
+      // Ensure 'Use Available Credit' is always included in the list
+      const hasWallet = normalized.some(g => g.isWallet);
+      const fullList = hasWallet ? normalized : [
+        {
+          id: 7,
+          name: 'Use Available Credit',
+          rawName: 'Wallet Credits',
+          isWallet: true,
+          isPayPal: false,
+          isCard: false,
+          methodType: 'credits',
+          icon: 'lni lni-wallet',
+          coFeeEnabled: false,
+          coFeeType: 0,
+          coFee: 0,
+          supportsSavedCards: false,
+          raw: {},
+        },
+        ...normalized,
+      ];
+
+      setGateways(fullList);
+
+      setSelectedGateway(prev => {
+        if (prev && fullList.some(g => g.id === prev.id)) return prev;
+        const walletGw = fullList.find(g => g.isWallet);
+        return walletGw || fullList[0] || null;
+      });
+    } catch (err) {
+      console.error('Error fetching gateways and credit balance:', err);
+      const fallback = [
+        {
+          id: 7,
+          name: 'Use Available Credit',
+          rawName: 'Wallet Credits',
+          isWallet: true,
+          isPayPal: false,
+          isCard: false,
+          methodType: 'credits',
+          icon: 'lni lni-wallet',
+          coFeeEnabled: false,
+          coFeeType: 0,
+          coFee: 0,
+          supportsSavedCards: false,
+          raw: {},
+        },
+      ];
+      setGateways(fallback);
+      setSelectedGateway(fallback[0]);
+    } finally {
+      setLoadingGateways(false);
+    }
+  };
+
+  // Initial gateway discovery
+  useEffect(() => {
+    fetchGatewaysAndCredits();
+  }, []);
 
   // Load children for real student name resolution
   useEffect(() => {
@@ -105,7 +335,7 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
             try {
               const d = new Date(g.createdDate);
               dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-            } catch (e) {
+            } catch {
               dateStr = String(g.createdDate);
             }
           } else {
@@ -196,13 +426,19 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
         const validIds = mappedOrders.map(o => o.orderId).filter(id => typeof id === 'number' || (typeof id === 'string' && !id.startsWith('local_')));
         if (validIds.length > 0) {
           try {
-            const calcRes = await calculateTotalApi({ orderIds: validIds, useCredits: true });
+            const calcRes = await calculateTotalApi({
+              orderIds: validIds,
+              useCredits: true,
+              gateway: selectedGateway?.isWallet ? undefined : selectedGateway?.id,
+            });
             if (calcRes && calcRes.status === 'success') {
               setSummary(calcRes);
             }
           } catch (calcErr) {
             console.error('Error calculating total:', calcErr);
           }
+          // Validate orders proactively to highlight expired dates/items immediately
+          runPreCheckoutValidation(validIds);
         }
       } else {
         setOrders([]);
@@ -227,6 +463,27 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
     );
   };
 
+  const handleSelectGateway = async (gw) => {
+    setSelectedGateway(gw);
+    const validIds = orders
+      .map(o => o.orderId)
+      .filter(id => typeof id === 'number' || (typeof id === 'string' && !id.startsWith('local_')));
+    if (validIds.length > 0) {
+      try {
+        const calcRes = await calculateTotalApi({
+          orderIds: validIds,
+          useCredits: true,
+          gateway: gw.isWallet ? undefined : gw.id,
+        });
+        if (calcRes && calcRes.status === 'success') {
+          setSummary(calcRes);
+        }
+      } catch (calcErr) {
+        console.error('Error recalculating total for gateway:', calcErr);
+      }
+    }
+  };
+
   const promptDeleteOrder = (order) => {
     setDeleteModal({
       isOpen: true,
@@ -247,7 +504,11 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
       const validIds = remainingOrders.map(o => o.orderId).filter(id => typeof id === 'number' || (typeof id === 'string' && !id.startsWith('local_')));
       if (validIds.length > 0) {
         try {
-          const calcRes = await calculateTotalApi({ orderIds: validIds, useCredits: true });
+          const calcRes = await calculateTotalApi({
+            orderIds: validIds,
+            useCredits: true,
+            gateway: selectedGateway?.isWallet ? undefined : selectedGateway?.id,
+          });
           if (calcRes && calcRes.status === 'success') {
             setSummary(calcRes);
           }
@@ -309,7 +570,7 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
 
   const avlCredits = summary?.availableCredits !== undefined
     ? parseFloat(summary.availableCredits)
-    : parseFloat(availableFunds || 0);
+    : (localCredits !== null ? localCredits : parseFloat(availableFunds || 0));
 
   const appliedCredits = summary?.creditsApplied !== undefined
     ? parseFloat(summary.creditsApplied)
@@ -319,7 +580,7 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
     ? parseFloat(summary.amountToPay)
     : Math.max(0, totalAmount - appliedCredits);
 
-  const deficit = Math.max(0, amountToPay - avlCredits);
+  const deficit = Math.max(0, totalAmount - avlCredits);
 
   /* ── Proceed with Checkout ── */
   const handleProceed = async () => {
@@ -329,44 +590,164 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
       return;
     }
 
-    if (avlCredits < amountToPay) {
-      toast.warn(`Insufficient wallet credits. Please add funds to cover $${amountToPay.toFixed(2)}.`);
-      setShowTopupModal(true);
-      setTopupAmount(deficit.toFixed(2));
-      return;
-    }
-
     setPaying(true);
     try {
-      try {
-        const validRes = await validateOrdersApi({ orderIds: activeOrderIds });
-        if (validRes && validRes.valid === false) {
-          toast.error(validRes.message || 'Validation error');
+      const valResult = await runPreCheckoutValidation(activeOrderIds);
+      if (!valResult.valid) {
+        setValidationModal({
+          isOpen: true,
+          message: valResult.message,
+          invalidOrders: valResult.invalidOrders,
+        });
+        toast.error(valResult.message || 'Validation error: some meal cutoffs have passed.');
+        setPaying(false);
+        return;
+      }
+
+      const isWalletChoice = selectedGateway?.isWallet || selectedGateway?.id === 7;
+      const isCardChoice = selectedGateway?.isCard || selectedGateway?.id === 4 || selectedGateway?.id === 14 || selectedGateway?.id === 11;
+      const isPayPalChoice = selectedGateway?.isPayPal || selectedGateway?.id === 8;
+
+      // Case 1: Wallet credits chosen
+      if (isWalletChoice) {
+        if (amountToPay > 0 || avlCredits < totalAmount) {
+          toast.warn(`Insufficient wallet credits. Please add funds to cover $${amountToPay.toFixed(2)}.`);
+          setShowTopupModal(true);
+          setTopupAmount(amountToPay.toFixed(2));
           setPaying(false);
           return;
         }
-      } catch (e) {
-        // Validation notice
+
+        const checkRes = await checkoutApi({
+          orderIds: activeOrderIds,
+          paymentMethod: 'credits',
+          useCredits: true,
+          notes: 'Paid using available wallet credits',
+        });
+
+        if (checkRes && (checkRes.status === 'success' || checkRes.paid || checkRes.orderId)) {
+          setReceipt(checkRes);
+          setShowSuccess(true);
+          if (refreshCart) refreshCart();
+          if (refreshUserData) refreshUserData();
+          if (setAmountOwed) setAmountOwed(0);
+          if (setAvailableFunds && checkRes.remainingCredits !== undefined) {
+            setAvailableFunds(parseFloat(checkRes.remainingCredits));
+            setLocalCredits(parseFloat(checkRes.remainingCredits));
+          }
+          toast.success('Orders placed and paid successfully with wallet credits!');
+        } else {
+          toast.error(checkRes?.message || 'Checkout failed. Please try again.');
+        }
+        return;
       }
 
+      // Case 2: Card gateway chosen
+      if (isCardChoice) {
+        if (amountToPay <= 0) {
+          const checkRes = await checkoutApi({
+            orderIds: activeOrderIds,
+            paymentMethod: 'credits',
+            useCredits: true,
+            notes: 'Paid using available wallet credits',
+          });
+          if (checkRes && (checkRes.status === 'success' || checkRes.paid)) {
+            setReceipt(checkRes);
+            setShowSuccess(true);
+            if (refreshCart) refreshCart();
+            if (refreshUserData) refreshUserData();
+            toast.success('Orders placed and paid successfully!');
+          } else {
+            toast.error(checkRes?.message || 'Checkout failed.');
+          }
+          return;
+        }
+
+        const cleanCard = cardDetails.cardNumber.replace(/\s+/g, '');
+        if (!cleanCard || cleanCard.length < 13) {
+          toast.warn('Please enter a valid card number.');
+          setPaying(false);
+          return;
+        }
+        if (!cardDetails.expMonth || !cardDetails.expYear) {
+          toast.warn('Please enter card expiration month and year.');
+          setPaying(false);
+          return;
+        }
+        if (!cardDetails.cvv || cardDetails.cvv.length < 3) {
+          toast.warn('Please enter card CVV.');
+          setPaying(false);
+          return;
+        }
+
+        const checkRes = await checkoutApi({
+          orderIds: activeOrderIds,
+          paymentMethod: 'card',
+          gateway: selectedGateway.id,
+          useCredits: true,
+          card: {
+            cardNumber: cleanCard,
+            expMonth: cardDetails.expMonth.padStart(2, '0'),
+            expYear: cardDetails.expYear.length === 2 ? `20${cardDetails.expYear}` : cardDetails.expYear,
+            cvv: cardDetails.cvv,
+            nameOnCard: cardDetails.nameOnCard || 'Parent',
+            billingZip: cardDetails.billingZip || '10001',
+          },
+          saveCard: Boolean(saveCard),
+        });
+
+        if (checkRes && (checkRes.status === 'success' || checkRes.paid || checkRes.orderId)) {
+          setReceipt(checkRes);
+          setShowSuccess(true);
+          if (refreshCart) refreshCart();
+          if (refreshUserData) refreshUserData();
+          toast.success('Orders placed and card charged successfully!');
+        } else {
+          toast.error(checkRes?.message || 'Payment processing failed. Please verify your card details.');
+        }
+        return;
+      }
+
+      // Case 3: PayPal chosen
+      if (isPayPalChoice) {
+        const checkRes = await checkoutApi({
+          orderIds: activeOrderIds,
+          paymentMethod: 'paypal',
+          gateway: selectedGateway.id,
+          useCredits: true,
+        });
+
+        if (checkRes?.redirectUrl) {
+          window.location.href = checkRes.redirectUrl;
+          return;
+        }
+        if (checkRes && (checkRes.status === 'success' || checkRes.paid)) {
+          setReceipt(checkRes);
+          setShowSuccess(true);
+          if (refreshCart) refreshCart();
+          if (refreshUserData) refreshUserData();
+          toast.success('Orders placed successfully!');
+        } else {
+          toast.error(checkRes?.message || 'PayPal checkout failed.');
+        }
+        return;
+      }
+
+      // Default fallback
       const checkRes = await checkoutApi({
         orderIds: activeOrderIds,
-        paymentMethod: 'wallet_credit',
+        paymentMethod: selectedGateway?.methodType || 'credits',
+        gateway: selectedGateway?.id,
         useCredits: true,
-        notes: 'Paid using available wallet credits'
       });
-
-      if (checkRes && checkRes.status === 'success') {
+      if (checkRes && (checkRes.status === 'success' || checkRes.paid)) {
         setReceipt(checkRes);
         setShowSuccess(true);
         if (refreshCart) refreshCart();
         if (refreshUserData) refreshUserData();
-        if (setAvailableFunds && checkRes.remainingCredits !== undefined) {
-          setAvailableFunds(parseFloat(checkRes.remainingCredits));
-        }
-        toast.success('Orders placed and paid successfully!');
+        toast.success('Orders placed successfully!');
       } else {
-        toast.error(checkRes?.message || 'Checkout failed. Please try again.');
+        toast.error(checkRes?.message || 'Payment processing failed.');
       }
     } catch (err) {
       console.error('Checkout error:', err);
@@ -394,7 +775,9 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
         if (setAvailableFunds && res.newBalance !== undefined) {
           setAvailableFunds(parseFloat(res.newBalance));
         }
+        setLocalCredits(parseFloat(res.newBalance || (avlCredits + amt)));
         await loadCartOrders();
+        await fetchGatewaysAndCredits();
       } else {
         toast.error(res?.message || 'Could not complete top up.');
       }
@@ -433,31 +816,35 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
     );
   }
 
-  const col1Methods = PAYMENT_METHODS_OPTIONS.slice(0, 5);
-  const col2Methods = PAYMENT_METHODS_OPTIONS.slice(5, 10);
-
   return (
     <div className="checkout-page-container">
       {/* ── Left Column: Orders List Stack ── */}
       <div className="checkout-orders-stack">
         {orders.map((order, idx) => {
           const isExpanded = expandedOrderIds.includes(order.orderId);
+          const isInvalid = invalidOrderIds.includes(order.orderId);
 
           return (
-            <div className="checkout-order-card" key={order.orderId || idx}>
+            <div className={`checkout-order-card ${isInvalid ? 'is-invalid' : ''}`} key={order.orderId || idx}>
               {/* Order Header Bar */}
               <div
                 className="checkout-order-header"
                 onClick={() => toggleExpandOrder(order.orderId)}
               >
                 <div className="checkout-order-meta-group">
-                  <div className="checkout-order-badge-icon">
-                    <i className="lni lni-calendar" />
+                  <div className="checkout-order-badge-icon" style={isInvalid ? { background: '#FEE2E2', color: '#DC2626' } : {}}>
+                    <i className={isInvalid ? 'lni lni-warning' : 'lni lni-calendar'} />
                   </div>
 
-                  <span className="checkout-order-title">
+                  <span className="checkout-order-title" style={isInvalid ? { color: '#DC2626' } : {}}>
                     ORDER {order.orderNumber}
                   </span>
+
+                  {isInvalid && (
+                    <span className="checkout-badge-invalid">
+                      <i className="lni lni-warning" /> Meal Date Passed
+                    </span>
+                  )}
 
                   <span className="checkout-order-pipe">|</span>
 
@@ -514,6 +901,22 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
                   </button>
                 </div>
               </div>
+
+              {/* Expired Meal Date Alert Banner */}
+              {isInvalid && (
+                <div className="checkout-order-invalid-alert">
+                  <span>
+                    ⚠️ <strong>Validation Error:</strong> This order contains meal items for dates that have already passed. Please remove it from your cart to proceed.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-remove-invalid-order"
+                    onClick={() => promptDeleteOrder(order)}
+                  >
+                    Remove Order #{order.orderId}
+                  </button>
+                </div>
+              )}
 
               {/* Expanded Order Table Details */}
               {isExpanded && (
@@ -598,46 +1001,198 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
         </div>
 
         <div className="checkout-payment-body">
+          {/* Available Wallet Credits Overview */}
+          <div className="checkout-credits-summary-box">
+            <div className="checkout-credits-icon-group">
+              <div className="checkout-credits-icon-circle">
+                <i className="lni lni-wallet" />
+              </div>
+              <div>
+                <div className="checkout-credits-label">Available Wallet Credits</div>
+                <div className="checkout-credits-amount">
+                  ${avlCredits.toFixed(2)}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="checkout-credits-add-btn"
+              onClick={() => {
+                setShowTopupModal(true);
+                setTopupAmount(deficit > 0 ? deficit.toFixed(2) : '20.00');
+              }}
+              title="Add funds to wallet"
+            >
+              <i className="lni lni-plus" /> Add Funds
+            </button>
+          </div>
+
           {/* Section 1: Choose a Payment Method */}
           <div className="checkout-section-title">
             <i className="lni lni-credit-cards" />
             <span>Choose a Payment Method</span>
           </div>
 
-          <div className="checkout-payment-methods-grid">
-            {/* Column 1 */}
-            <div>
-              {col1Methods.map((method, idx) => (
-                <label className="checkout-radio-option" key={idx} style={{ marginBottom: 10 }}>
-                  <input
-                    type="radio"
-                    name="paymentMethod"
-                    checked={selectedMethodIdx === idx}
-                    onChange={() => setSelectedMethodIdx(idx)}
-                  />
-                  <span>{method}</span>
-                </label>
-              ))}
+          {loadingGateways ? (
+            <div style={{ padding: '16px 8px', textAlign: 'center', color: '#64748B', fontSize: 13, marginBottom: 16 }}>
+              <span className="spinner-border spinner-border-sm" role="status" style={{ marginRight: 8, display: 'inline-block', width: 14, height: 14, border: '2px solid #006D77', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              Loading available payment gateways...
             </div>
-
-            {/* Column 2 */}
-            <div>
-              {col2Methods.map((method, idx) => {
-                const actualIdx = idx + 5;
+          ) : (
+            <div className="checkout-gateways-container">
+              {gateways.map((gw) => {
+                const isSelected = selectedGateway?.id === gw.id;
                 return (
-                  <label className="checkout-radio-option" key={actualIdx} style={{ marginBottom: 10 }}>
-                    <input
-                      type="radio"
-                      name="paymentMethod"
-                      checked={selectedMethodIdx === actualIdx}
-                      onChange={() => setSelectedMethodIdx(actualIdx)}
-                    />
-                    <span>{method}</span>
-                  </label>
+                  <div
+                    key={gw.id}
+                    className={`checkout-gateway-card ${isSelected ? 'selected' : ''}`}
+                    onClick={() => handleSelectGateway(gw)}
+                  >
+                    <div className="checkout-gateway-radio-col">
+                      <input
+                        type="radio"
+                        name="paymentGateway"
+                        id={`gw_${gw.id}`}
+                        checked={isSelected}
+                        onChange={() => handleSelectGateway(gw)}
+                      />
+                    </div>
+                    <div className="checkout-gateway-content">
+                      <div className="checkout-gateway-top-line">
+                        <span className="checkout-gateway-title">
+                          {gw.name}
+                        </span>
+                        {gw.isWallet ? (
+                          <span className={`checkout-tag-credit ${avlCredits > 0 ? 'positive' : 'empty'}`}>
+                            ${avlCredits.toFixed(2)} Available
+                          </span>
+                        ) : (
+                          gw.coFeeEnabled && gw.coFee > 0 && (
+                            <span className="checkout-tag-fee">
+                              {gw.coFeeType === 1 ? `+${gw.coFee}% fee` : `+$${gw.coFee.toFixed(2)} fee`}
+                            </span>
+                          )
+                        )}
+                      </div>
+                      <div className="checkout-gateway-subtitle">
+                        {gw.isWallet ? (
+                          avlCredits >= totalAmount ? (
+                            <span style={{ color: '#059669', fontWeight: 500 }}>
+                              ✓ 100% covered by credits • Instant checkout
+                            </span>
+                          ) : avlCredits > 0 ? (
+                            <span style={{ color: '#D97706' }}>
+                              Credits cover ${avlCredits.toFixed(2)} • Shortage: ${deficit.toFixed(2)}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#DC2626' }}>
+                              $0.00 Available • Top-up needed or select card gateway
+                            </span>
+                          )
+                        ) : gw.isPayPal ? (
+                          'Fast & secure checkout via your PayPal account'
+                        ) : (
+                          'Pay securely using Credit / Debit Card'
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 );
               })}
             </div>
-          </div>
+          )}
+
+          {/* Insufficient credits warning when wallet credit is chosen */}
+          {selectedGateway?.isWallet && deficit > 0 && (
+            <div className="checkout-deficit-warning">
+              <div>
+                <strong>Credit Deficit: ${deficit.toFixed(2)}</strong>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#92400E' }}>
+                  Available balance (${avlCredits.toFixed(2)}) is less than total due (${totalAmount.toFixed(2)}).
+                </p>
+              </div>
+              <button
+                type="button"
+                className="checkout-quick-topup-btn"
+                onClick={() => {
+                  setShowTopupModal(true);
+                  setTopupAmount(deficit.toFixed(2));
+                }}
+              >
+                Top Up ${deficit.toFixed(2)}
+              </button>
+            </div>
+          )}
+
+          {/* Direct Card details input when a card gateway is chosen and amountToPay > 0 */}
+          {selectedGateway?.isCard && amountToPay > 0 && (
+            <div className="checkout-card-input-box">
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#1E293B', marginBottom: 10 }}>
+                Credit Card Details ({selectedGateway.name})
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <input
+                  type="text"
+                  placeholder="Cardholder Name"
+                  value={cardDetails.nameOnCard}
+                  onChange={e => setCardDetails(prev => ({ ...prev, nameOnCard: e.target.value }))}
+                  className="checkout-card-input"
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <input
+                  type="text"
+                  maxLength="19"
+                  placeholder="Card Number (16 digits)"
+                  value={cardDetails.cardNumber}
+                  onChange={e => setCardDetails(prev => ({ ...prev, cardNumber: e.target.value }))}
+                  className="checkout-card-input"
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1.2fr', gap: 8, marginBottom: 6 }}>
+                <input
+                  type="text"
+                  maxLength="2"
+                  placeholder="MM"
+                  value={cardDetails.expMonth}
+                  onChange={e => setCardDetails(prev => ({ ...prev, expMonth: e.target.value }))}
+                  className="checkout-card-input"
+                />
+                <input
+                  type="text"
+                  maxLength="4"
+                  placeholder="YYYY"
+                  value={cardDetails.expYear}
+                  onChange={e => setCardDetails(prev => ({ ...prev, expYear: e.target.value }))}
+                  className="checkout-card-input"
+                />
+                <input
+                  type="password"
+                  maxLength="4"
+                  placeholder="CVV"
+                  value={cardDetails.cvv}
+                  onChange={e => setCardDetails(prev => ({ ...prev, cvv: e.target.value }))}
+                  className="checkout-card-input"
+                />
+                <input
+                  type="text"
+                  maxLength="10"
+                  placeholder="ZIP"
+                  value={cardDetails.billingZip}
+                  onChange={e => setCardDetails(prev => ({ ...prev, billingZip: e.target.value }))}
+                  className="checkout-card-input"
+                />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748B', marginTop: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={saveCard}
+                  onChange={e => setSaveCard(e.target.checked)}
+                />
+                <span>Save card for future faster checkout</span>
+              </label>
+            </div>
+          )}
 
           {/* Section 2: Transaction Details */}
           <div className="checkout-section-title">
@@ -794,9 +1349,14 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
             <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
               Payment Successful!
             </h2>
-            <p style={{ color: '#636363', fontSize: 14, marginBottom: 20 }}>
+            <p style={{ color: '#636363', fontSize: 14, marginBottom: receipt?.transactionId ? 8 : 20 }}>
               Your order has been paid and confirmed.
             </p>
+            {receipt?.transactionId && (
+              <p style={{ fontSize: 12.5, color: '#64748B', marginBottom: 20 }}>
+                Transaction ID: <strong>{receipt.transactionId}</strong>
+              </p>
+            )}
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
               <button
                 className="btn-cancel"
@@ -853,6 +1413,71 @@ const Checkout = ({ availableFunds = 0, setAvailableFunds, setAmountOwed, refres
                 style={{ background: '#E54A4A', borderColor: '#E54A4A', color: '#fff' }}
               >
                 {deleting ? 'Removing...' : 'Remove Order'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Validation Error Modal ── */}
+      {validationModal.isOpen && (
+        <div className="modal-overlay" onClick={() => !removingInvalid && setValidationModal({ isOpen: false, message: '', invalidOrders: [] })}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#FEE2E2', color: '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>
+                <i className="lni lni-warning" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#1E293B' }}>
+                  Cart Validation Error
+                </h3>
+                <span style={{ fontSize: 13, color: '#64748B' }}>
+                  Some items cannot be checked out
+                </span>
+              </div>
+            </div>
+
+            <p style={{ color: '#64748B', fontSize: 13.5, lineHeight: 1.5, margin: '14px 0 10px' }}>
+              {validationModal.message || 'One or more items in your cart have passed their meal date or missed cutoff deadlines.'}
+            </p>
+
+            {validationModal.invalidOrders && validationModal.invalidOrders.length > 0 && (
+              <div className="validation-modal-list">
+                {validationModal.invalidOrders.map((inv, idx) => (
+                  <div className="validation-item-row" key={idx}>
+                    <div className="validation-item-header">
+                      <i className="lni lni-calendar" />
+                      <span>Order #{inv.orderId} • Date: {inv.orderDate || '--'}</span>
+                    </div>
+                    <div className="validation-item-reason">
+                      {inv.reason || 'Meal date has already passed. Please remove this item from your cart.'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p style={{ fontSize: 12, color: '#94A3B8', marginBottom: 20 }}>
+              To proceed with checkout, please remove the expired order(s) from your cart. You can remove them automatically below:
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                type="button"
+                className="btn-cancel"
+                disabled={removingInvalid}
+                onClick={() => setValidationModal({ isOpen: false, message: '', invalidOrders: [] })}
+              >
+                Review Cart
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={removingInvalid}
+                onClick={handleRemoveInvalidOrders}
+                style={{ background: '#DC2626', borderColor: '#DC2626', color: '#FFFFFF' }}
+              >
+                {removingInvalid ? 'Removing Expired...' : 'Remove Expired Orders'}
               </button>
             </div>
           </div>

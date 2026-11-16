@@ -269,10 +269,21 @@ export const getOrderedDatesApi = async (childId, menuId) => {
 };
 
 /* ==========================================================================
-   CHECKOUT APIs
+   CHECKOUT & PAYMENT GATEWAYS APIs
    ========================================================================== */
 export const checkoutApi = async (data) => {
   const response = await api.post('api/v1/orders/checkout', data);
+  return response.data;
+};
+
+export const getPaymentGatewaysApi = async (campusId) => {
+  const url = campusId ? `api/v1/payments/gateways?campusId=${campusId}` : 'api/v1/payments/gateways';
+  const response = await api.get(url);
+  return response.data;
+};
+
+export const getSavedCardsApi = async () => {
+  const response = await api.get('api/v1/payments/saved-cards');
   return response.data;
 };
 
